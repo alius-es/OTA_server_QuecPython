@@ -2,4 +2,6 @@
 # OTA Configuration
 #==============================================================================
 
-OTA_SERVER = "https://investment-anything-refresh-courtesy.trycloudflare.com"
+OTA_SERVER = "https://complicated-teacher-jay-charitable.trycloudflare.com"
+
+LOCAL_VERSION_FILE = "/usr/version.json"
