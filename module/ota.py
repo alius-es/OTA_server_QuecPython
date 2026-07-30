@@ -86,20 +86,92 @@ class OTA:
         print(text)
         print("----------------------------------------")
 
-        info = ujson.loads(text)
+
+        remote_info = ujson.loads(text)
+
+        local_info = self.get_local_version()
 
         print("")
-        print("Project     :", info["project"])
-        print("Version     :", info["version"])
-        print("Description :", info["description"])
+        print("Remote version :", remote_info["version"])
+        print("Local version  :", local_info["version"])
+
+        #----------------------------------------------------------
+        # Compare versions
+        #----------------------------------------------------------
+
+        if remote_info["version"] == local_info["version"]:
+
+            print("")
+            print("Application is up to date.")
+
+        else:
+
+            print("")
+            print("New version available.")
+
+            for file in remote_info["files"]:
+
+                self.download_file(
+                    file["path"],
+                    "/usr/" + file["name"] + ".new"
+                )
+
+        return remote_info
+
+    #--------------------------------------------------------------------------
+    # Read local version file
+    #--------------------------------------------------------------------------
+    def get_local_version(self):
+
+        try:
+
+            with open(config.LOCAL_VERSION_FILE, "r") as f:
+
+                info = ujson.load(f)
+
+            print("")
+            print("Local version :", info["version"])
+
+            return info
+
+        except Exception:
+
+            print("")
+            print("Local version file not found.")
+
+            return {
+                "project": "",
+                "version": "0.0.0"
+            }
+
+    #--------------------------------------------------------------------------
+    # Download file from OTA server
+    #--------------------------------------------------------------------------
+    def download_file(self, remote_path, local_path):
+
+        url = self.server + remote_path
 
         print("")
-        print("Files:")
+        print("Downloading:", url)
 
-        for file in info["files"]:
+        response = request.get(url)
 
-            print("  {}".format(file["name"]))
+        if response.status_code != 200:
 
-        print("")
+            response.close()
 
-        return info
+            raise Exception(
+                "HTTP Error: {}".format(response.status_code)
+            )
+
+        file = open(local_path, "w")
+
+        for chunk in response.text:
+
+            file.write(chunk)
+
+        file.close()
+
+        response.close()
+
+        print("Saved:", local_path)
