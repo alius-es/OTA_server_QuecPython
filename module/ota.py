@@ -21,7 +21,7 @@
 
 import request
 import ujson
-
+import uos
 import config
 
 
@@ -116,7 +116,16 @@ class OTA:
                     "/usr/" + file["name"] + ".new"
                 )
 
-        return remote_info
+            if self.install_update(remote_info):
+
+                print("")
+                print("Update installed successfully.")
+
+            else:
+
+                print("")
+                print("Update installation failed.")
+
 
     #--------------------------------------------------------------------------
     # Read local version file
@@ -143,6 +152,7 @@ class OTA:
                 "project": "",
                 "version": "0.0.0"
             }
+
 
     #--------------------------------------------------------------------------
     # Download file from OTA server
@@ -175,3 +185,90 @@ class OTA:
         response.close()
 
         print("Saved:", local_path)
+
+
+    #--------------------------------------------------------------------------
+    # Install downloaded update
+    #--------------------------------------------------------------------------
+    def install_update(self, manifest):
+
+        print("")
+        print("========================================")
+        print("Installing update")
+        print("========================================")
+
+        #----------------------------------------------------------
+        # Verify downloaded files
+        #----------------------------------------------------------
+
+        for file in manifest["files"]:
+
+            new_file = "/usr/" + file["name"] + ".new"
+
+            try:
+
+                uos.stat(new_file)
+
+            except:
+
+                print("")
+                print("Missing:", new_file)
+                print("Installation cancelled.")
+
+                return False
+
+        print("")
+        print("All update files verified.")
+
+        #----------------------------------------------------------
+        # Install every file except version.json
+        #----------------------------------------------------------
+
+        for file in manifest["files"]:
+
+            if file["name"] == "version.json":
+                continue
+
+            self.replace_file(file["name"])
+
+        #----------------------------------------------------------
+        # Install version.json last
+        #----------------------------------------------------------
+
+        for file in manifest["files"]:
+
+            if file["name"] != "version.json":
+                continue
+
+            self.replace_file("version.json")
+
+            break
+
+        print("")
+        print("Installation completed.")
+
+        return True
+
+
+    #--------------------------------------------------------------------------
+    # Replace old file with downloaded file
+    #--------------------------------------------------------------------------
+    def replace_file(self, filename):
+
+        old_file = "/usr/" + filename
+        new_file = old_file + ".new"
+
+        print("")
+        print("Installing:", filename)
+
+        try:
+
+            uos.remove(old_file)
+
+        except:
+
+            pass
+
+        uos.rename(new_file, old_file)
+
+        print("Installed:", filename)
