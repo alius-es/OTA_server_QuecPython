@@ -9,11 +9,8 @@
 # Startup sequence:
 #
 #     1. Print application information.
-#     2. Check OTA server for a new version.
-#     3. If an update exists:
-#            - download update
-#            - install update
-#            - restart device
+#     2. Check OTA server for updates.
+#     3. Install update if a new version is available.
 #     4. Start the main application.
 #
 #==============================================================================
@@ -24,17 +21,30 @@
 #------------------------------------------------------------------------------
 
 import utime
+import ujson
 
 import ota
 
 
 #------------------------------------------------------------------------------
-# Application information
+# Read local manifest
 #------------------------------------------------------------------------------
 
-APP_NAME = "QuecPython OTA Demo"
-APP_VERSION = "1.0.0"
+def get_local_manifest():
 
+    try:
+
+        with open("/usr/manifest.json", "r") as file:
+
+            return ujson.load(file)
+
+    except:
+
+        return {
+            "project": "Unknown",
+            "version": "Unknown",
+            "files": []
+        }
 
 #------------------------------------------------------------------------------
 # Print application banner
@@ -42,13 +52,14 @@ APP_VERSION = "1.0.0"
 
 def print_banner():
 
-    print("")
-    print("==================================================")
-    print(" Application :", APP_NAME)
-    print(" Version     :", APP_VERSION)
-    print("==================================================")
-    print("")
+    manifest = get_local_manifest()
 
+    print("")
+    print("==================================================")
+    print(" Application :", manifest["project"])
+    print(" Version     :", manifest["version"])
+    print("==================================================")
+    print("")
 
 #------------------------------------------------------------------------------
 # Main application
@@ -60,9 +71,9 @@ def application_loop():
 
     while True:
 
-        # -------------------------------------------------------------
+        #--------------------------------------------------------------
         # Place your application code here.
-        # -------------------------------------------------------------
+        #--------------------------------------------------------------
 
         print("Heartbeat")
 
@@ -77,8 +88,6 @@ def run():
 
     print_banner()
 
-    print("Checking OTA server...")
-
     try:
 
         ota_client = ota.OTA()
@@ -87,10 +96,10 @@ def run():
 
     except Exception as e:
 
+        print("")
         print("OTA Error:", e)
 
     print("")
-
     print("Starting application...")
     print("")
 
