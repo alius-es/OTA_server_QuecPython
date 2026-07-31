@@ -1,11 +1,16 @@
 {
     "project": "QuecPython OTA Demo",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Initial firmware",
     "files": [
         {
             "name": "app.py",
             "path": "/files/app.py"
+        },
+
+        {
+            "name": "new.txt",
+            "path": "/files/new.txt"
         }
     ]
 }

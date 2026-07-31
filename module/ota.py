@@ -38,7 +38,7 @@ class OTA:
 
         self.server = config.OTA_SERVER
 
-        self.version_url = self.server + "/version.json"
+        self.manifest_url = self.server + "/manifest.json"
 
 
     #--------------------------------------------------------------------------
@@ -69,7 +69,7 @@ class OTA:
 
 
     #--------------------------------------------------------------------------
-    # Download and parse version.json
+    # Download and parse OTA manifest.json
     #--------------------------------------------------------------------------
     def check_update(self):
 
@@ -78,10 +78,10 @@ class OTA:
         print("Checking OTA server")
         print("========================================")
 
-        text = self.download_text(self.version_url)
+        text = self.download_text(self.manifest_url)
 
         print("")
-        print("Received version.json")
+        print("Received manifest.json")
         print("----------------------------------------")
         print(text)
         print("----------------------------------------")
