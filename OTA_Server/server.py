@@ -96,9 +96,9 @@ while True:
         continue
 
     # If browser requests "/"
-    # automatically return version.json
+    # automatically return manifest.json
     if path == "/":
-        path = "/version.json"
+        path = "/manifest.json"
 
     # Replace URL separator with OS separator
     # Linux:
