@@ -1,16 +1,26 @@
 {
     "project": "QuecPython OTA Demo",
-    "version": "1.0.1",
-    "description": "Initial firmware",
+    "version": "1.1.0",
+    "description": "QuecPython OTA Example",
+    "build": {
+        "date": "2026-08-03",
+        "time": "10:32:13"
+    },
     "files": [
         {
             "name": "app.py",
-            "path": "/files/app.py"
+            "path": "/files/app.py",
+            "sha256": "a927fefe48db2bb124dabd46ace181e9b5db6280181240f65f249a7a843dfd11"
         },
-
         {
-            "name": "new.txt",
-            "path": "/files/new.txt"
+            "name": "config.py",
+            "path": "/files/config.py",
+            "sha256": "49a70fb586bbd9703cf9dbad46549c5a82a17f3889eb3ef4a461fc61aaa28631"
+        },
+        {
+            "name": "ota.py",
+            "path": "/files/ota.py",
+            "sha256": "2570c13ac540fba2a5e030931b5f17d3d710f319aad733307e68e019aee06042"
         }
     ]
 }
