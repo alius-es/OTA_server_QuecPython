@@ -1,12 +1,9 @@
 {
     "project": "QuecPython OTA Demo",
-
-    "version":
-    {
+    "version": {
         "major": 1,
-        "minor": 0,
+        "minor": 1,
         "patch": 0
     },
-
     "description": "QuecPython OTA Example"
 }

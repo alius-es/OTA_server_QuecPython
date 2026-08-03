@@ -191,6 +191,15 @@ def build_manifest(project):
 
         })
 
+    #----------------------------------------------------------
+    # Verify manifest
+    #----------------------------------------------------------
+
+    if len(manifest["files"]) == 0:
+
+        raise Exception(
+            "The 'files' directory is empty."
+        )
 
     return manifest
 

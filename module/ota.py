@@ -23,6 +23,7 @@ import request
 import ujson
 import uos
 import config
+import uhashlib
 
 
 #------------------------------------------------------------------------------
@@ -86,8 +87,18 @@ class OTA:
         print(text)
         print("----------------------------------------")
 
-
         remote_manifest = ujson.loads(text)
+
+        #----------------------------------------------------------
+        # Validate manifest
+        #----------------------------------------------------------
+
+        if len(remote_manifest["files"]) == 0:
+
+            print("")
+            print("Invalid manifest: no files.")
+
+            return
 
         local_manifest = self.get_local_manifest()
 
@@ -104,32 +115,47 @@ class OTA:
             print("")
             print("Application is up to date.")
 
+            return
+
+        print("")
+        print("New version available.")
+
+        #----------------------------------------------------------
+        # Download changed files only
+        #----------------------------------------------------------
+        for file in remote_manifest["files"]:
+
+            if self.file_is_up_to_date(file):
+                print("")
+                print(file["name"], "is up to date.")
+
+                continue
+
+            self.download_file(
+                file["path"],
+                "/usr/" + file["name"] + ".new"
+            )
+
+        #----------------------------------------------------------
+        # Download new manifest
+        #----------------------------------------------------------
+        self.download_file(
+            "/manifest.json",
+            "/usr/manifest.json.new"
+        )
+
+        #----------------------------------------------------------
+        # Install update
+        #----------------------------------------------------------
+        if self.install_update(local_manifest, remote_manifest):
+
+            print("")
+            print("Update installed successfully.")
+
         else:
 
             print("")
-            print("New version available.")
-
-            for file in remote_manifest["files"]:
-
-                self.download_file(
-                    file["path"],
-                    "/usr/" + file["name"] + ".new"
-                )
-
-            self.download_file(
-                "/manifest.json",
-                "/usr/manifest.json.new"
-            )
-            
-            if self.install_update(local_manifest, remote_manifest):
-
-                print("")
-                print("Update installed successfully.")
-
-            else:
-
-                print("")
-                print("Update installation failed.")
+            print("Update installation failed.")
 
 
     #--------------------------------------------------------------------------
@@ -211,29 +237,23 @@ class OTA:
 
             new_file = "/usr/" + file["name"] + ".new"
 
-            try:
+            if not self.file_exists(new_file):
+                continue
 
-                uos.stat(new_file)
-
-            except:
-
+            if not self.verify_download(file):
                 print("")
-                print("Missing:", new_file)
+                print("Verification failed:", file["name"])
                 print("Installation cancelled.")
 
                 return False
 
-        try:
-
-            uos.stat("/usr/manifest.json.new")
-
-        except:
-
+        if not self.file_exists("/usr/manifest.json.new"):
             print("")
             print("Missing: /usr/manifest.json.new")
             print("Installation cancelled.")
 
             return False
+        
 
         print("")
         print("All update files verified.")
@@ -256,6 +276,9 @@ class OTA:
             if file["name"] == "ota.py":
                 continue
 
+            if not self.file_exists("/usr/" + file["name"] + ".new"):
+                continue
+
             self.replace_file(file["name"])
 
         #----------------------------------------------------------
@@ -267,6 +290,9 @@ class OTA:
             if file["name"] != "ota.py":
                 continue
 
+            if not self.file_exists("/usr/ota.py.new"):
+                break
+            
             self.replace_file("ota.py")
 
             break
@@ -357,3 +383,79 @@ class OTA:
 
         print("")
         print("Obsolete files removed.")
+
+
+    #--------------------------------------------------------------------------
+    # Calculate SHA-256 of file
+    #--------------------------------------------------------------------------
+    def calculate_sha256(self, filename):
+
+        sha256 = uhashlib.sha256()
+
+        file = open(filename, "rb")
+
+        while True:
+
+            data = file.read(512)
+
+            if not data:
+                break
+
+            sha256.update(data)
+
+        file.close()
+
+        digest = sha256.digest()
+
+        result = ""
+
+        for byte in digest:
+            result += "{:02x}".format(byte)
+
+        return result
+
+    #--------------------------------------------------------------------------
+    # Check if file exists
+    #--------------------------------------------------------------------------
+    def file_exists(self, filename):
+
+        try:
+
+            uos.stat(filename)
+
+            return True
+
+        except:
+
+            return False
+
+    #--------------------------------------------------------------------------
+    # Check whether local file is up to date
+    #--------------------------------------------------------------------------
+    def file_is_up_to_date(self, file_info):
+
+        filename = "/usr/" + file_info["name"]
+
+        if not self.file_exists(filename):
+            return False
+
+        local_sha256 = self.calculate_sha256(filename)
+
+        if local_sha256 == file_info["sha256"]:
+            return True
+
+        return False
+
+    #--------------------------------------------------------------------------
+    # Verify downloaded file
+    #--------------------------------------------------------------------------
+    def verify_download(self, file_info):
+
+        filename = "/usr/" + file_info["name"] + ".new"
+
+        sha256 = self.calculate_sha256(filename)
+
+        if sha256 == file_info["sha256"]:
+            return True
+
+        return False

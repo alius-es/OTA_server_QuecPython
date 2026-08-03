@@ -2,7 +2,9 @@
 in powershell and use address after 
 "Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):"
 
-manifest file.json - stores information about updates: 
-name, version, description, names of updated files
-
 folder 'files' should only have files for updating
+
+manifest.json should not be changed manually, it is generated automatically
+by generate_manifest.py
+
+to change manifest.json manually, use project.json before executing generate_manifest.py
