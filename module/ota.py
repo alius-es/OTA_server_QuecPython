@@ -278,6 +278,38 @@ class OTA:
 
 
     #--------------------------------------------------------------------------
+    # Perform complete OTA update.
+    #
+    # This is a convenience wrapper around:
+    #
+    #     check_update()
+    #     download_update()
+    #     install_update()
+    #--------------------------------------------------------------------------
+    def update(self):
+
+        update_info = self.check_update()
+
+        if update_info is None:
+
+            return False
+
+        if not self.download_update(
+            update_info["remote_manifest"]
+        ):
+
+            return False
+
+        if not self.install_update(
+            update_info["local_manifest"],
+            update_info["remote_manifest"]
+        ):
+
+            return False
+
+        return True
+
+    #--------------------------------------------------------------------------
     # Read local manifest file
     #--------------------------------------------------------------------------
     def get_local_manifest(self):
