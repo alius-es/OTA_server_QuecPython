@@ -122,7 +122,7 @@ def run():
 def restart_device():
 
     print("")
-    print("Restart device here.")
+    print("Restarting module...")
     print("")
 
     Power.powerRestart()
