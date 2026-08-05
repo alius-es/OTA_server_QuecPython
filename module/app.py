@@ -94,19 +94,14 @@ def run():
 
         ota_client = ota.OTA()
 
-        update = ota_client.check_update()
+        #----------------------------------------------
+        # Complete OTA update
+        #----------------------------------------------
+        if ota_client.update():
 
-        if update:
+            restart_device()
 
-            if ota_client.download_update(update["remote_manifest"]):
-
-                if ota_client.install_update(
-                    update["local_manifest"],
-                    update["remote_manifest"]
-                ):
-                    restart_device()
-
-                    return
+            return
 
     except Exception as e:
 
