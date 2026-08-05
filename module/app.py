@@ -9,9 +9,11 @@
 # Startup sequence:
 #
 #     1. Print application information.
-#     2. Check OTA server for updates.
-#     3. Install update if a new version is available.
-#     4. Start the main application.
+#     2. Check OTA server.
+#     3. Download update if available.
+#     4. Install update.
+#     5. Restart device.
+#     6. Start the main application.
 #
 #==============================================================================
 
@@ -22,7 +24,7 @@
 
 import utime
 import ujson
-
+from misc import Power
 import ota
 
 
@@ -92,7 +94,19 @@ def run():
 
         ota_client = ota.OTA()
 
-        ota_client.check_update()
+        update = ota_client.check_update()
+
+        if update:
+
+            if ota_client.download_update(update["remote_manifest"]):
+
+                if ota_client.install_update(
+                    update["local_manifest"],
+                    update["remote_manifest"]
+                ):
+                    restart_device()
+
+                    return
 
     except Exception as e:
 
@@ -104,3 +118,16 @@ def run():
     print("")
 
     application_loop()
+
+
+#------------------------------------------------------------------------------
+# Restart device
+#------------------------------------------------------------------------------
+
+def restart_device():
+
+    print("")
+    print("Restart device here.")
+    print("")
+
+    Power.powerRestart()
