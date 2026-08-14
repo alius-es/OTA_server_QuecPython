@@ -1,26 +1,26 @@
 {
     "project": "QuecPython OTA Demo",
-    "version": "1.1.0",
+    "version": "1.4.4",
     "description": "QuecPython OTA Example",
     "build": {
-        "date": "2026-08-03",
-        "time": "10:32:13"
+        "date": "2026-08-10",
+        "time": "11:53:20"
     },
     "files": [
         {
             "name": "app.py",
             "path": "/files/app.py",
-            "sha256": "a927fefe48db2bb124dabd46ace181e9b5db6280181240f65f249a7a843dfd11"
+            "sha256": "00f7832b5911096adb15c0036a35dc050229405e1ac462305f9b2935aebe1d49"
         },
         {
             "name": "config.py",
             "path": "/files/config.py",
-            "sha256": "49a70fb586bbd9703cf9dbad46549c5a82a17f3889eb3ef4a461fc61aaa28631"
+            "sha256": "06fa7f1ac3466f52c079f0274833339bb2dec3cc615a2181b04249ffbed135a5"
         },
         {
             "name": "ota.py",
             "path": "/files/ota.py",
-            "sha256": "2570c13ac540fba2a5e030931b5f17d3d710f319aad733307e68e019aee06042"
+            "sha256": "9902593479d11f88b51dd54ced8d6bbec765affd84302702311a53e94042252d"
         }
     ]
 }

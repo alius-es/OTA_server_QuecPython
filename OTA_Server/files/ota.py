@@ -33,8 +33,19 @@ import uhashlib
 class OTA:
 
     #--------------------------------------------------------------------------
+    # Constants
+    #--------------------------------------------------------------------------
+
+    TEMP_EXTENSION = ".new"
+
+    PROTECTED_FILES = (
+        "main.py",
+    )
+
+    #--------------------------------------------------------------------------
     # Constructor
     #--------------------------------------------------------------------------
+
     def __init__(self):
 
         self.server = config.OTA_SERVER
@@ -70,7 +81,7 @@ class OTA:
 
 
     #--------------------------------------------------------------------------
-    # Check OTA server and install update if available
+    # Check OTA server for updates
     #--------------------------------------------------------------------------
     def check_update(self):
 
@@ -120,6 +131,22 @@ class OTA:
         print("")
         print("New version available.")
 
+        return {
+            "local_manifest": local_manifest,
+            "remote_manifest": remote_manifest
+        }
+
+
+    #--------------------------------------------------------------------------
+    # Download update files
+    #--------------------------------------------------------------------------
+    def download_update(self, remote_manifest):
+     
+        print("")
+        print("========================================")
+        print("Downloading update")
+        print("========================================")   
+
         #----------------------------------------------------------
         # Download changed files only
         #----------------------------------------------------------
@@ -133,7 +160,7 @@ class OTA:
 
             self.download_file(
                 file["path"],
-                "/usr/" + file["name"] + ".new"
+                "/usr/" + file["name"] + self.TEMP_EXTENSION
             )
 
         #----------------------------------------------------------
@@ -141,22 +168,146 @@ class OTA:
         #----------------------------------------------------------
         self.download_file(
             "/manifest.json",
-            "/usr/manifest.json.new"
+            "/usr/manifest.json" + self.TEMP_EXTENSION
         )
 
         #----------------------------------------------------------
-        # Install update
+        # Verify downloaded files
         #----------------------------------------------------------
-        if self.install_update(local_manifest, remote_manifest):
+
+        for file in remote_manifest["files"]:
+
+            new_file = "/usr/" + file["name"] + self.TEMP_EXTENSION
+
+            if not self.file_exists(new_file):
+                continue
+
+            if not self.verify_download(file):
+                print("")
+                print("Verification failed:", file["name"])
+
+                self.cleanup_downloads()
+
+                return False
+
+        if not self.file_exists("/usr/manifest.json" + self.TEMP_EXTENSION):
+            print("")
+            print("Missing: /usr/manifest.json" + self.TEMP_EXTENSION)
+
+            self.cleanup_downloads()
+
+            return False
+
+        print("")
+        print("Download completed.")
+
+        return True
+
+
+    #--------------------------------------------------------------------------
+    # Install downloaded update
+    #--------------------------------------------------------------------------
+    def install_update(self, local_manifest, remote_manifest):
+
+        print("")
+        print("========================================")
+        print("Installing update")
+        print("========================================")
+
+
+        #----------------------------------------------------------
+        # Remove obsolete files
+        #----------------------------------------------------------
+
+        self.remove_obsolete_files(
+            local_manifest, 
+            remote_manifest
+        )
+
+        #----------------------------------------------------------
+        # Install every file except ota.py
+        #----------------------------------------------------------
+
+        for file in remote_manifest["files"]:
+
+            if file["name"] == "ota.py":
+                continue
+
+            if not self.file_exists("/usr/" + file["name"] + self.TEMP_EXTENSION):
+                continue
+
+            self.replace_file(file["name"])
+
+        #----------------------------------------------------------
+        # Install ota.py
+        #----------------------------------------------------------
+
+        for file in remote_manifest["files"]:
+
+            if file["name"] != "ota.py":
+                continue
+
+            if not self.file_exists("/usr/ota.py" + self.TEMP_EXTENSION):
+                break
+            
+            self.replace_file("ota.py")
+
+            break
+
+        #----------------------------------------------------------
+        # Install manifest.json
+        #----------------------------------------------------------
+
+        self.replace_file("manifest.json")
+
+        if self.verify_installation(remote_manifest):
+
+            self.cleanup_downloads()
 
             print("")
-            print("Update installed successfully.")
+            print("Installation completed.")
 
-        else:
+            return True
 
-            print("")
-            print("Update installation failed.")
+        self.cleanup_downloads()
 
+        print("")
+        print("Installation verification failed.")
+
+        return False
+
+
+    #--------------------------------------------------------------------------
+    # Perform complete OTA update.
+    #
+    # This is a convenience wrapper around:
+    #
+    #     check_update()
+    #     download_update()
+    #     install_update()
+    #--------------------------------------------------------------------------
+    def update(self):
+
+        update_info = self.check_update()
+
+        if update_info is None:
+
+            return False
+
+        if not self.download_update(
+            update_info["remote_manifest"]
+        ):
+
+            return False
+
+        if not self.install_update(
+            update_info["local_manifest"],
+            update_info["remote_manifest"]
+        ):
+
+            return False
+
+        return True
 
     #--------------------------------------------------------------------------
     # Read local manifest file
@@ -218,104 +369,13 @@ class OTA:
 
         print("Saved:", local_path)
 
-
-    #--------------------------------------------------------------------------
-    # Install downloaded update
-    #--------------------------------------------------------------------------
-    def install_update(self, local_manifest, remote_manifest):
-
-        print("")
-        print("========================================")
-        print("Installing update")
-        print("========================================")
-
-        #----------------------------------------------------------
-        # Verify downloaded files
-        #----------------------------------------------------------
-
-        for file in remote_manifest["files"]:
-
-            new_file = "/usr/" + file["name"] + ".new"
-
-            if not self.file_exists(new_file):
-                continue
-
-            if not self.verify_download(file):
-                print("")
-                print("Verification failed:", file["name"])
-                print("Installation cancelled.")
-
-                return False
-
-        if not self.file_exists("/usr/manifest.json.new"):
-            print("")
-            print("Missing: /usr/manifest.json.new")
-            print("Installation cancelled.")
-
-            return False
-        
-
-        print("")
-        print("All update files verified.")
-
-        #----------------------------------------------------------
-        # Remove obsolete files
-        #----------------------------------------------------------
-
-        self.remove_obsolete_files(
-            local_manifest, 
-            remote_manifest
-        )
-
-        #----------------------------------------------------------
-        # Install every file except ota.py
-        #----------------------------------------------------------
-
-        for file in remote_manifest["files"]:
-
-            if file["name"] == "ota.py":
-                continue
-
-            if not self.file_exists("/usr/" + file["name"] + ".new"):
-                continue
-
-            self.replace_file(file["name"])
-
-        #----------------------------------------------------------
-        # Install ota.py
-        #----------------------------------------------------------
-
-        for file in remote_manifest["files"]:
-
-            if file["name"] != "ota.py":
-                continue
-
-            if not self.file_exists("/usr/ota.py.new"):
-                break
-            
-            self.replace_file("ota.py")
-
-            break
-
-        #----------------------------------------------------------
-        # Install manifest.json
-        #----------------------------------------------------------
-
-        self.replace_file("manifest.json")
-
-        print("")
-        print("Installation completed.")
-
-        return True
-
-
     #--------------------------------------------------------------------------
     # Replace old file with downloaded file
     #--------------------------------------------------------------------------
     def replace_file(self, filename):
 
         old_file = "/usr/" + filename
-        new_file = old_file + ".new"
+        new_file = old_file + self.TEMP_EXTENSION
 
         print("")
         print("Installing:", filename)
@@ -358,7 +418,7 @@ class OTA:
 
             filename = file["name"]
 
-            if filename == "main.py":
+            if filename in self.PROTECTED_FILES:
 
                 continue
 
@@ -451,7 +511,7 @@ class OTA:
     #--------------------------------------------------------------------------
     def verify_download(self, file_info):
 
-        filename = "/usr/" + file_info["name"] + ".new"
+        filename = "/usr/" + file_info["name"] + self.TEMP_EXTENSION
 
         sha256 = self.calculate_sha256(filename)
 
@@ -459,3 +519,81 @@ class OTA:
             return True
 
         return False
+
+    #--------------------------------------------------------------------------
+    # Verify installed update
+    #--------------------------------------------------------------------------
+    def verify_installation(self, remote_manifest):
+
+        print("")
+        print("Verifying installation")
+
+        #----------------------------------------------------------
+        # Verify installed files
+        #----------------------------------------------------------
+        for file in remote_manifest["files"]:
+
+            filename = "/usr/" + file["name"]
+
+            if not self.file_exists(filename):
+                print("")
+                print("Missing:", filename)
+
+                return False
+
+            sha256 = self.calculate_sha256(filename)
+
+            if sha256 != file["sha256"]:
+                print("")
+                print("Verification failed:", file["name"])
+
+                return False
+            
+        #----------------------------------------------------------
+        # Verify manifest
+        #---------------------------------------------------------- 
+        if not self.file_exists("/usr/manifest.json"):
+            print("")
+            print("Missing: /usr/manifest.json")
+
+            return False
+
+        print("")
+        print("Installation verified.")
+
+        return True
+         
+
+    #--------------------------------------------------------------------------
+    # Remove temporary update files
+    #--------------------------------------------------------------------------
+    def cleanup_downloads(self):
+
+        print("")
+        print("Removing temporary files")
+
+        try:
+            files = uos.listdir("/usr")
+
+        except:
+            return
+
+        for filename in files:
+
+            if not filename.endswith(self.TEMP_EXTENSION):
+                continue
+
+            filepath = "/usr/" + filename
+
+            print("")
+            print("Removing:", filename)
+
+            try:
+                uos.remove(filepath)
+                print("Removed:", filename)
+
+            except:
+                print("Failed:", filename)
+
+        print("")
+        print("Temporary files removed.")

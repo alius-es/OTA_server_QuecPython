@@ -2,6 +2,6 @@
 # OTA Configuration
 #==============================================================================
 
-OTA_SERVER = "surge-missions-recreational-furnished.trycloudflare.com"
+OTA_SERVER = "https://cars-makeup-llc-magazines.trycloudflare.com"
 
 LOCAL_MANIFEST_FILE = "/usr/manifest.json"
