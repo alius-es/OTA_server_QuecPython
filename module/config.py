@@ -2,6 +2,6 @@
 # OTA Configuration
 #==============================================================================
 
-OTA_SERVER = "https://cars-makeup-llc-magazines.trycloudflare.com"
+OTA_SERVER = "https://worm-wallpaper-discussed-belle.trycloudflare.com"
 
 LOCAL_MANIFEST_FILE = "/usr/manifest.json"

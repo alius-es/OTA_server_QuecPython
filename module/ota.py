@@ -2,15 +2,16 @@
 # File: ota.py
 #
 # Description:
-#     OTA (Over-The-Air) update module.
+#     OTA (Over-The-Air) update module for QuecPython application files.
 #
 # Responsibilities:
 #     - Connect to OTA server
-#     - Download manifest.json
-#     - Parse manifest
-#     - Compare versions
-#     - Download update files
-#     - Install update
+#     - Download and parse manifest.json
+#     - Validate manifest
+#     - Compare local and remote versions
+#     - Determine files that require update
+#     - Download update files using app_fota
+#     - Set application update flag
 #
 #==============================================================================
 
@@ -22,8 +23,10 @@
 import request
 import ujson
 import uos
-import config
 import uhashlib
+import app_fota
+import ql_fs
+import config
 
 
 #------------------------------------------------------------------------------
@@ -33,567 +36,154 @@ import uhashlib
 class OTA:
 
     #--------------------------------------------------------------------------
-    # Constants
-    #--------------------------------------------------------------------------
-
-    TEMP_EXTENSION = ".new"
-
-    PROTECTED_FILES = (
-        "main.py",
-    )
-
-    #--------------------------------------------------------------------------
     # Constructor
     #--------------------------------------------------------------------------
 
     def __init__(self):
-
-        self.server = config.OTA_SERVER
-
-        self.manifest_url = self.server + "/manifest.json"
+        pass
 
 
     #--------------------------------------------------------------------------
-    # Download text file from server
-    #--------------------------------------------------------------------------
-    def download_text(self, url):
-
-        print("")
-        print("GET:", url)
-
-        response = request.get(url)
-
-        if response.status_code != 200:
-
-            response.close()
-
-            raise Exception("HTTP Error: {}".format(response.status_code))
-
-        text = ""
-
-        for chunk in response.text:
-
-            text += chunk
-
-        response.close()
-
-        return text
-
-
-    #--------------------------------------------------------------------------
-    # Check OTA server for updates
-    #--------------------------------------------------------------------------
-    def check_update(self):
-
-        print("")
-        print("========================================")
-        print("Checking OTA server")
-        print("========================================")
-
-        text = self.download_text(self.manifest_url)
-
-        print("")
-        print("Received manifest.json")
-        print("----------------------------------------")
-        print(text)
-        print("----------------------------------------")
-
-        remote_manifest = ujson.loads(text)
-
-        #----------------------------------------------------------
-        # Validate manifest
-        #----------------------------------------------------------
-
-        if len(remote_manifest["files"]) == 0:
-
-            print("")
-            print("Invalid manifest: no files.")
-
-            return
-
-        local_manifest = self.get_local_manifest()
-
-        print("")
-        print("Remote version :", remote_manifest["version"])
-        print("Local version  :", local_manifest["version"])
-
-        #----------------------------------------------------------
-        # Compare versions
-        #----------------------------------------------------------
-
-        if remote_manifest["version"] == local_manifest["version"]:
-
-            print("")
-            print("Application is up to date.")
-
-            return
-
-        print("")
-        print("New version available.")
-
-        return {
-            "local_manifest": local_manifest,
-            "remote_manifest": remote_manifest
-        }
-
-
-    #--------------------------------------------------------------------------
-    # Download update files
-    #--------------------------------------------------------------------------
-    def download_update(self, remote_manifest):
-     
-        print("")
-        print("========================================")
-        print("Downloading update")
-        print("========================================")   
-
-        #----------------------------------------------------------
-        # Download changed files only
-        #----------------------------------------------------------
-        for file in remote_manifest["files"]:
-
-            if self.file_is_up_to_date(file):
-                print("")
-                print(file["name"], "is up to date.")
-
-                continue
-
-            self.download_file(
-                file["path"],
-                "/usr/" + file["name"] + self.TEMP_EXTENSION
-            )
-
-        #----------------------------------------------------------
-        # Download new manifest
-        #----------------------------------------------------------
-        self.download_file(
-            "/manifest.json",
-            "/usr/manifest.json" + self.TEMP_EXTENSION
-        )
-
-        #----------------------------------------------------------
-        # Verify downloaded files
-        #----------------------------------------------------------
-
-        for file in remote_manifest["files"]:
-
-            new_file = "/usr/" + file["name"] + self.TEMP_EXTENSION
-
-            if not self.file_exists(new_file):
-                continue
-
-            if not self.verify_download(file):
-                print("")
-                print("Verification failed:", file["name"])
-
-                self.cleanup_downloads()
-
-                return False
-
-        if not self.file_exists("/usr/manifest.json" + self.TEMP_EXTENSION):
-            print("")
-            print("Missing: /usr/manifest.json" + self.TEMP_EXTENSION)
-
-            self.cleanup_downloads()
-
-            return False
-
-        print("")
-        print("Download completed.")
-
-        return True
-
-
-    #--------------------------------------------------------------------------
-    # Install downloaded update
-    #--------------------------------------------------------------------------
-    def install_update(self, local_manifest, remote_manifest):
-
-        print("")
-        print("========================================")
-        print("Installing update")
-        print("========================================")
-
-
-        #----------------------------------------------------------
-        # Remove obsolete files
-        #----------------------------------------------------------
-
-        self.remove_obsolete_files(
-            local_manifest, 
-            remote_manifest
-        )
-
-        #----------------------------------------------------------
-        # Install every file except ota.py
-        #----------------------------------------------------------
-
-        for file in remote_manifest["files"]:
-
-            if file["name"] == "ota.py":
-                continue
-
-            if not self.file_exists("/usr/" + file["name"] + self.TEMP_EXTENSION):
-                continue
-
-            self.replace_file(file["name"])
-
-        #----------------------------------------------------------
-        # Install ota.py
-        #----------------------------------------------------------
-
-        for file in remote_manifest["files"]:
-
-            if file["name"] != "ota.py":
-                continue
-
-            if not self.file_exists("/usr/ota.py" + self.TEMP_EXTENSION):
-                break
-            
-            self.replace_file("ota.py")
-
-            break
-
-        #----------------------------------------------------------
-        # Install manifest.json
-        #----------------------------------------------------------
-
-        self.replace_file("manifest.json")
-
-        if self.verify_installation(remote_manifest):
-
-            self.cleanup_downloads()
-
-            print("")
-            print("Installation completed.")
-
-            return True
-
-        self.cleanup_downloads()
-
-        print("")
-        print("Installation verification failed.")
-
-        return False
-
-
-    #--------------------------------------------------------------------------
-    # Perform complete OTA update.
+    # Perform complete OTA update
     #
-    # This is a convenience wrapper around:
+    # Flow:
     #
     #     check_update()
+    #          ↓
     #     download_update()
-    #     install_update()
+    #          ↓
+    #     set_update_flag()
+    #
+    # Reboot is performed by app.py.
     #--------------------------------------------------------------------------
+
     def update(self):
+        pass
 
-        update_info = self.check_update()
-
-        if update_info is None:
-
-            return False
-
-        if not self.download_update(
-            update_info["remote_manifest"]
-        ):
-
-            return False
-
-        if not self.install_update(
-            update_info["local_manifest"],
-            update_info["remote_manifest"]
-        ):
-
-            return False
-
-        return True
 
     #--------------------------------------------------------------------------
-    # Read local manifest file
+    # Check OTA server for available update
+    #
+    # Responsibilities:
+    #     - Download manifest.json
+    #     - Parse JSON
+    #     - Validate manifest
+    #     - Read local manifest
+    #     - Compare versions
+    #
+    # Returns:
+    #     Update information or None.
     #--------------------------------------------------------------------------
+
+    def check_update(self):
+        pass
+
+
+    #--------------------------------------------------------------------------
+    # Download manifest.json from OTA server
+    #--------------------------------------------------------------------------
+
+    def download_manifest(self):
+        pass
+
+
+    #--------------------------------------------------------------------------
+    # Validate remote manifest
+    #
+    # Responsibilities:
+    #     - Validate required fields
+    #     - Validate version
+    #     - Validate files list
+    #     - Validate file names and paths
+    #     - Validate SHA-256 values
+    #--------------------------------------------------------------------------
+
+    def validate_manifest(self, manifest):
+        pass
+
+
+    #--------------------------------------------------------------------------
+    # Read local manifest
+    #--------------------------------------------------------------------------
+
     def get_local_manifest(self):
-
-        try:
-
-            with open(config.LOCAL_MANIFEST_FILE, "r") as f:
-
-                info = ujson.load(f)
-
-            print("")
-            print("Local version :", info["version"])
-
-            return info
-
-        except Exception:
-
-            print("")
-            print("Local manifest not found.")
-
-            return {
-                "project": "",
-                "version": "0.0.0",
-                "files": []
-            }
+        pass
 
 
     #--------------------------------------------------------------------------
-    # Download file from OTA server
+    # Determine whether a new version is available
     #--------------------------------------------------------------------------
-    def download_file(self, remote_path, local_path):
 
-        url = self.server + remote_path
-
-        print("")
-        print("Downloading:", url)
-
-        response = request.get(url)
-
-        if response.status_code != 200:
-
-            response.close()
-
-            raise Exception(
-                "HTTP Error: {}".format(response.status_code)
-            )
-
-        file = open(local_path, "w")
-
-        for chunk in response.text:
-
-            file.write(chunk)
-
-        file.close()
-
-        response.close()
-
-        print("Saved:", local_path)
-
-    #--------------------------------------------------------------------------
-    # Replace old file with downloaded file
-    #--------------------------------------------------------------------------
-    def replace_file(self, filename):
-
-        old_file = "/usr/" + filename
-        new_file = old_file + self.TEMP_EXTENSION
-
-        print("")
-        print("Installing:", filename)
-
-        try:
-
-            uos.remove(old_file)
-
-        except:
-
-            pass
-
-        uos.rename(new_file, old_file)
-
-        print("Installed:", filename)
-
-    #--------------------------------------------------------------------------
-    # Remove obsolete application files
-    #--------------------------------------------------------------------------
-    def remove_obsolete_files(self, local_manifest, remote_manifest):
-
-        print("")
-        print("Removing obsolete files")
-
-        #----------------------------------------------------------
-        # Build list of new files
-        #----------------------------------------------------------
-
-        new_files = {}
-
-        for file in remote_manifest["files"]:
-
-            new_files[file["name"]] = True
-
-        #----------------------------------------------------------
-        # Remove files that are no longer present
-        #----------------------------------------------------------
-
-        for file in local_manifest["files"]:
-
-            filename = file["name"]
-
-            if filename in self.PROTECTED_FILES:
-
-                continue
-
-            if filename in new_files:
-
-                continue
-
-            filepath = "/usr/" + filename
-
-            print("")
-            print("Removing:", filename)
-
-            try:
-
-                uos.remove(filepath)
-
-                print("Removed:", filename)
-
-            except:
-
-                print("Already missing:", filename)
-
-        print("")
-        print("Obsolete files removed.")
+    def is_update_available(self, local_manifest, remote_manifest):
+        pass
 
 
     #--------------------------------------------------------------------------
-    # Calculate SHA-256 of file
+    # Build app_fota download list
+    #
+    # Determines which files need to be downloaded.
     #--------------------------------------------------------------------------
-    def calculate_sha256(self, filename):
 
-        sha256 = uhashlib.sha256()
+    def build_download_list(self, remote_manifest):
+        pass
 
-        file = open(filename, "rb")
-
-        while True:
-
-            data = file.read(512)
-
-            if not data:
-                break
-
-            sha256.update(data)
-
-        file.close()
-
-        digest = sha256.digest()
-
-        result = ""
-
-        for byte in digest:
-            result += "{:02x}".format(byte)
-
-        return result
 
     #--------------------------------------------------------------------------
-    # Check if file exists
+    # Download update files using QuecPython app_fota
+    #
+    # Responsibilities:
+    #     - Prepare download list
+    #     - Handle interrupted previous OTA state
+    #     - Call app_fota.bulk_download()
+    #     - Process download result
     #--------------------------------------------------------------------------
+
+    def download_update(self, remote_manifest):
+        pass
+
+
+    #--------------------------------------------------------------------------
+    # Set QuecPython Application OTA update flag
+    #--------------------------------------------------------------------------
+
+    def set_update_flag(self):
+        pass
+
+
+    #--------------------------------------------------------------------------
+    # Handle residual files from an interrupted Application OTA
+    #
+    # Quectel recommends checking /usr/.updater before starting
+    # another Application OTA.
+    #--------------------------------------------------------------------------
+
+    def cleanup_previous_update(self):
+        pass
+
+
+    #--------------------------------------------------------------------------
+    # Check whether a file exists
+    #--------------------------------------------------------------------------
+
     def file_exists(self, filename):
+        pass
 
-        try:
-
-            uos.stat(filename)
-
-            return True
-
-        except:
-
-            return False
 
     #--------------------------------------------------------------------------
-    # Check whether local file is up to date
+    # Calculate SHA-256 of a local file
+    #
+    # Used by OTA metadata/integrity logic.
     #--------------------------------------------------------------------------
+
+    def calculate_sha256(self, filename):
+        pass
+
+
+    #--------------------------------------------------------------------------
+    # Check whether local file already matches manifest
+    #
+    # Used to avoid unnecessary cellular downloads.
+    #--------------------------------------------------------------------------
+
     def file_is_up_to_date(self, file_info):
-
-        filename = "/usr/" + file_info["name"]
-
-        if not self.file_exists(filename):
-            return False
-
-        local_sha256 = self.calculate_sha256(filename)
-
-        if local_sha256 == file_info["sha256"]:
-            return True
-
-        return False
-
-    #--------------------------------------------------------------------------
-    # Verify downloaded file
-    #--------------------------------------------------------------------------
-    def verify_download(self, file_info):
-
-        filename = "/usr/" + file_info["name"] + self.TEMP_EXTENSION
-
-        sha256 = self.calculate_sha256(filename)
-
-        if sha256 == file_info["sha256"]:
-            return True
-
-        return False
-
-    #--------------------------------------------------------------------------
-    # Verify installed update
-    #--------------------------------------------------------------------------
-    def verify_installation(self, remote_manifest):
-
-        print("")
-        print("Verifying installation")
-
-        #----------------------------------------------------------
-        # Verify installed files
-        #----------------------------------------------------------
-        for file in remote_manifest["files"]:
-
-            filename = "/usr/" + file["name"]
-
-            if not self.file_exists(filename):
-                print("")
-                print("Missing:", filename)
-
-                return False
-
-            sha256 = self.calculate_sha256(filename)
-
-            if sha256 != file["sha256"]:
-                print("")
-                print("Verification failed:", file["name"])
-
-                return False
-            
-        #----------------------------------------------------------
-        # Verify manifest
-        #---------------------------------------------------------- 
-        if not self.file_exists("/usr/manifest.json"):
-            print("")
-            print("Missing: /usr/manifest.json")
-
-            return False
-
-        print("")
-        print("Installation verified.")
-
-        return True
-         
-
-    #--------------------------------------------------------------------------
-    # Remove temporary update files
-    #--------------------------------------------------------------------------
-    def cleanup_downloads(self):
-
-        print("")
-        print("Removing temporary files")
-
-        try:
-            files = uos.listdir("/usr")
-
-        except:
-            return
-
-        for filename in files:
-
-            if not filename.endswith(self.TEMP_EXTENSION):
-                continue
-
-            filepath = "/usr/" + filename
-
-            print("")
-            print("Removing:", filename)
-
-            try:
-                uos.remove(filepath)
-                print("Removed:", filename)
-
-            except:
-                print("Failed:", filename)
-
-        print("")
-        print("Temporary files removed.")
+        pass
