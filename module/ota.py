@@ -40,25 +40,36 @@ class OTA:
     #--------------------------------------------------------------------------
 
     def __init__(self):
-        pass
+
+        self.server = config.OTA_SERVER
+
+        self.manifest_url = self.server + "/manifest.json"
+        
+        self.fota = app_fota.new()
 
 
     #--------------------------------------------------------------------------
     # Perform complete OTA update
-    #
-    # Flow:
-    #
-    #     check_update()
-    #          ↓
-    #     download_update()
-    #          ↓
-    #     set_update_flag()
-    #
-    # Reboot is performed by app.py.
     #--------------------------------------------------------------------------
-
     def update(self):
-        pass
+
+        update_info = self.check_update()
+
+        if update_info is None:
+            return False
+
+        if not self.cleanup_previous_update():
+            return False
+
+        if not self.download_update(
+            update_info["remote_manifest"]
+        ):
+            return False
+
+        if not self.set_update_flag():
+            return False
+
+        return True
 
 
     #--------------------------------------------------------------------------
@@ -76,7 +87,37 @@ class OTA:
     #--------------------------------------------------------------------------
 
     def check_update(self):
-        pass
+
+        print("")
+        print("========================================")
+        print("Checking OTA server")
+        print("========================================")
+
+        remote_manifest = self.download_manifest()
+
+        local_manifest = self.get_local_manifest()
+
+        print("")
+        print("Remote version :", remote_manifest["version"])
+        print("Local version  :", local_manifest["version"])
+
+        if not self.is_update_available(
+            local_manifest,
+            remote_manifest
+        ):
+
+            print("")
+            print("Application is up to date.")
+
+            return None
+
+        print("")
+        print("New version available.")
+
+        return {
+            "local_manifest": local_manifest,
+            "remote_manifest": remote_manifest
+        }
 
 
     #--------------------------------------------------------------------------
@@ -84,7 +125,28 @@ class OTA:
     #--------------------------------------------------------------------------
 
     def download_manifest(self):
-        pass
+
+        print("")
+        print("GET:", self.manifest_url)
+
+        response = request.get(self.manifest_url)
+
+        if response.status_code != 200:
+
+            response.close()
+
+            raise Exception(
+                "HTTP Error: {}".format(response.status_code)
+            )
+
+        text = ""
+
+        for chunk in response.text:
+            text += chunk
+
+        response.close()
+
+        return ujson.loads(text)
 
 
     #--------------------------------------------------------------------------
@@ -105,85 +167,189 @@ class OTA:
     #--------------------------------------------------------------------------
     # Read local manifest
     #--------------------------------------------------------------------------
-
     def get_local_manifest(self):
-        pass
+
+        try:
+
+            with open(config.LOCAL_MANIFEST_FILE, "r") as f:
+                return ujson.load(f)
+
+        except Exception:
+
+            print("")
+            print("Local manifest not found.")
+
+            return {
+                "project": "",
+                "version": "0.0.0",
+                "files": []
+            }
 
 
     #--------------------------------------------------------------------------
-    # Determine whether a new version is available
+    # Check whether an update is available
     #--------------------------------------------------------------------------
-
     def is_update_available(self, local_manifest, remote_manifest):
-        pass
+
+        return (
+            remote_manifest["version"]
+            != local_manifest["version"]
+        )
 
 
     #--------------------------------------------------------------------------
     # Build app_fota download list
-    #
-    # Determines which files need to be downloaded.
     #--------------------------------------------------------------------------
-
     def build_download_list(self, remote_manifest):
-        pass
 
+        download_list = []
+
+        for file in remote_manifest["files"]:
+
+            if self.file_is_up_to_date(file):
+
+                print("")
+                print(file["name"], "is up to date.")
+
+                continue
+
+            download_list.append({
+                "url": self.server + file["path"],
+                "file_name": "/usr/" + file["name"]
+            })
+
+        download_list.append({
+            "url": self.manifest_url,
+            "file_name": "/usr/manifest.json"
+        })
+
+        return download_list
 
     #--------------------------------------------------------------------------
-    # Download update files using QuecPython app_fota
-    #
-    # Responsibilities:
-    #     - Prepare download list
-    #     - Handle interrupted previous OTA state
-    #     - Call app_fota.bulk_download()
-    #     - Process download result
+    # Download update files using app_fota
     #--------------------------------------------------------------------------
-
     def download_update(self, remote_manifest):
-        pass
 
+        print("")
+        print("========================================")
+        print("Downloading update")
+        print("========================================")
+
+        download_list = self.build_download_list(
+            remote_manifest
+        )
+
+        if not download_list:
+
+            print("")
+            print("No files need to be downloaded.")
+
+            return True
+
+        print("")
+        print("Files to download:", len(download_list))
+
+        result = self.fota.bulk_download(
+            download_list
+        )
+
+        if result is not None:
+
+            print("")
+            print("APP FOTA download failed:")
+            print(result)
+
+            return False
+
+        print("")
+        print("APP FOTA download completed.")
+
+        return True
 
     #--------------------------------------------------------------------------
-    # Set QuecPython Application OTA update flag
+    # Set Application FOTA update flag
     #--------------------------------------------------------------------------
-
     def set_update_flag(self):
-        pass
+
+        print("")
+        print("Setting APP FOTA update flag")
+
+        self.fota.set_update_flag()
+
+        print("")
+        print("APP FOTA update flag set.")
+
+        return True
 
 
     #--------------------------------------------------------------------------
-    # Handle residual files from an interrupted Application OTA
-    #
-    # Quectel recommends checking /usr/.updater before starting
-    # another Application OTA.
+    # Clean up previous incomplete Application FOTA
     #--------------------------------------------------------------------------
-
     def cleanup_previous_update(self):
-        pass
 
+        updater_path = "/usr/.updater"
+
+        if not ql_fs.path_exists(updater_path):
+            return True
+
+        print("")
+        print("Previous APP FOTA update found.")
+
+        ql_fs.rmdirs(updater_path)
+
+        print("")
+        print("Previous APP FOTA update removed.")
+
+        return True
 
     #--------------------------------------------------------------------------
     # Check whether a file exists
     #--------------------------------------------------------------------------
-
     def file_exists(self, filename):
-        pass
 
+        try:
+            uos.stat(filename)
+            return True
+
+        except:
+            return False
 
     #--------------------------------------------------------------------------
     # Calculate SHA-256 of a local file
-    #
-    # Used by OTA metadata/integrity logic.
     #--------------------------------------------------------------------------
-
     def calculate_sha256(self, filename):
-        pass
 
+        sha256 = uhashlib.sha256()
+
+        with open(filename, "rb") as f:
+
+            while True:
+
+                data = f.read(512)
+
+                if not data:
+                    break
+
+                sha256.update(data)
+
+        result = ""
+
+        for byte in sha256.digest():
+            result += "{:02x}".format(byte)
+
+        return result
 
     #--------------------------------------------------------------------------
     # Check whether local file already matches manifest
-    #
-    # Used to avoid unnecessary cellular downloads.
     #--------------------------------------------------------------------------
-
     def file_is_up_to_date(self, file_info):
-        pass
+
+        filename = "/usr/" + file_info["name"]
+
+        if not self.file_exists(filename):
+            return False
+
+        return (
+            self.calculate_sha256(filename)
+            == file_info["sha256"]
+        )
