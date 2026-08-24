@@ -294,10 +294,43 @@ class OTA:
     #--------------------------------------------------------------------------
     def is_update_available(self, local_manifest, remote_manifest):
 
-        return (
-            remote_manifest["version"]
-            != local_manifest["version"]
+        local_version = self.parse_version(
+            local_manifest["version"]
         )
+
+        remote_version = self.parse_version(
+            remote_manifest["version"]
+        )
+
+        return remote_version > local_version
+
+    #--------------------------------------------------------------------------
+    # Parsing the version to help method is_update_available
+    #--------------------------------------------------------------------------
+    def parse_version(self, version):
+
+        parts = version.split(".")
+
+        if len(parts) != 3:
+            raise ValueError(
+                "Invalid version: {}".format(version)
+            )
+
+        try:
+            major = int(parts[0])
+            minor = int(parts[1])
+            patch = int(parts[2])
+        except:
+            raise ValueError(
+                "Invalid version: {}".format(version)
+            )
+
+        if major < 0 or minor < 0 or patch < 0:
+            raise ValueError(
+                "Invalid version: {}".format(version)
+            )
+
+        return (major, minor, patch)
 
 
     #--------------------------------------------------------------------------
