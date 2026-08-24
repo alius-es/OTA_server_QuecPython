@@ -95,6 +95,8 @@ class OTA:
 
         remote_manifest = self.download_manifest()
 
+        self.validate_manifest(remote_manifest)
+
         local_manifest = self.get_local_manifest()
 
         print("")
@@ -161,7 +163,108 @@ class OTA:
     #--------------------------------------------------------------------------
 
     def validate_manifest(self, manifest):
-        pass
+
+        if not isinstance(manifest, dict):
+            raise ValueError("Manifest must be an object")
+
+        #----------------------------------------------------------------------
+        # Version
+        #----------------------------------------------------------------------
+
+        if "version" not in manifest:
+            raise ValueError("Manifest version is missing")
+
+        version = manifest["version"]
+
+        if not isinstance(version, str) or not version:
+            raise ValueError("Manifest version is invalid")
+
+        #----------------------------------------------------------------------
+        # Files
+        #----------------------------------------------------------------------
+
+        if "files" not in manifest:
+            raise ValueError("Manifest files are missing")
+
+        files = manifest["files"]
+
+        if not isinstance(files, list):
+            raise ValueError("Manifest files must be a list")
+
+        if not files:
+            raise ValueError("Manifest files list is empty")
+
+        #----------------------------------------------------------------------
+        # File entries
+        #----------------------------------------------------------------------
+
+        for file_info in files:
+
+            if not isinstance(file_info, dict):
+                raise ValueError("Invalid file entry")
+
+            if "name" not in file_info:
+                raise ValueError("File name is missing")
+
+            if "path" not in file_info:
+                raise ValueError("File path is missing")
+
+            if "sha256" not in file_info:
+                raise ValueError("File SHA-256 is missing")
+
+            name = file_info["name"]
+            path = file_info["path"]
+            sha256 = file_info["sha256"]
+
+            #------------------------------------------------------------------
+            # Name
+            #------------------------------------------------------------------
+
+            if (
+                not isinstance(name, str)
+                or not name
+                or "/" in name
+                or "\\" in name
+                or name in (".", "..")
+            ):
+                raise ValueError(
+                    "Invalid file name: {}".format(name)
+                )
+
+            #------------------------------------------------------------------
+            # Path
+            #------------------------------------------------------------------
+
+            if (
+                not isinstance(path, str)
+                or not path.startswith("/files/")
+                or ".." in path
+                or "\\" in path
+            ):
+                raise ValueError(
+                    "Invalid file path: {}".format(path)
+                )
+
+            #------------------------------------------------------------------
+            # SHA-256
+            #------------------------------------------------------------------
+
+            if (
+                not isinstance(sha256, str)
+                or len(sha256) != 64
+            ):
+                raise ValueError(
+                    "Invalid SHA-256: {}".format(sha256)
+                )
+
+            for char in sha256:
+
+                if char not in "0123456789abcdef":
+                    raise ValueError(
+                        "Invalid SHA-256: {}".format(sha256)
+                    )
+
+        return True
 
 
     #--------------------------------------------------------------------------
