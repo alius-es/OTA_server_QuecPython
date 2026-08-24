@@ -287,7 +287,7 @@ class OTA:
     #--------------------------------------------------------------------------
     def cleanup_previous_update(self):
 
-        updater_path = "/usr/.updater"
+        updater_path = "/fota/usr/.updater"
 
         if not ql_fs.path_exists(updater_path):
             return True
