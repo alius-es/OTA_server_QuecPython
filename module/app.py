@@ -24,7 +24,6 @@
 
 import utime
 import ujson
-from misc import Power
 import ota
 import checkNet
 
@@ -115,9 +114,6 @@ def run():
         ota_client = ota.OTA()
 
         if ota_client.update():
-
-            restart_device()
-
             return
 
     except Exception as e:
@@ -131,18 +127,6 @@ def run():
 
     application_loop()
 
-
-#------------------------------------------------------------------------------
-# Restart device
-#------------------------------------------------------------------------------
-
-def restart_device():
-
-    print("")
-    print("Restarting module...")
-    print("")
-
-    Power.powerRestart()
 
 #------------------------------------------------------------------------------
 # Wait until cellular network is ready
