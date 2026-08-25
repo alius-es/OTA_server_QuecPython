@@ -27,7 +27,7 @@ import uhashlib
 import app_fota
 import ql_fs
 import config
-
+from misc import Power
 
 #------------------------------------------------------------------------------
 # OTA Class
@@ -69,7 +69,10 @@ class OTA:
         if not self.set_update_flag():
             return False
 
-        return True
+        print("")
+        print("Restarting module...")
+
+        Power.powerRestart()
 
 
     #--------------------------------------------------------------------------
