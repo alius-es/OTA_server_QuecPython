@@ -212,11 +212,15 @@ class OTA:
             if "path" not in file_info:
                 raise ValueError("File path is missing")
 
+            if "size" not in file_info:
+                raise ValueError("File size is missing")
+
             if "sha256" not in file_info:
                 raise ValueError("File SHA-256 is missing")
 
             name = file_info["name"]
             path = file_info["path"]
+            size = file_info["size"]
             sha256 = file_info["sha256"]
 
             #------------------------------------------------------------------
@@ -246,6 +250,18 @@ class OTA:
             ):
                 raise ValueError(
                     "Invalid file path: {}".format(path)
+                )
+
+            #------------------------------------------------------------------
+            # Size
+            #------------------------------------------------------------------
+
+            if (
+                not isinstance(size, int)
+                or size < 0
+            ):
+                raise ValueError(
+                    "Invalid file size: {}".format(size)
                 )
 
             #------------------------------------------------------------------

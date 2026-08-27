@@ -187,6 +187,8 @@ def build_manifest(project):
 
             "path": "/files/" + filename,
 
+            "size": os.path.getsize(full_path),
+
             "sha256": calculate_sha256(full_path)
 
         })
