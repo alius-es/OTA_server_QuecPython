@@ -28,6 +28,7 @@ import app_fota
 import ql_fs
 import config
 from misc import Power
+import utime
 
 #------------------------------------------------------------------------------
 # OTA Class
@@ -78,6 +79,9 @@ class OTA:
         print("Restarting module...")
 
         Power.powerRestart()
+
+        utime.sleep(5)
+        return
 
 
     #--------------------------------------------------------------------------
