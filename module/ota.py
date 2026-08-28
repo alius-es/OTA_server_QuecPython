@@ -61,6 +61,11 @@ class OTA:
         if not self.cleanup_previous_update():
             return False
 
+        if not self.check_storage_requirements(
+            update_info["remote_manifest"]
+        ):
+            return False
+
         if not self.download_update(
             update_info["remote_manifest"]
         ):
@@ -561,3 +566,30 @@ class OTA:
         required_space += blocks * block_size
 
         return required_space
+
+    #--------------------------------------------------------------------------
+    # Check whether enough space is available
+    #--------------------------------------------------------------------------
+    def check_storage_requirements(self, remote_manifest):
+
+        required_space = self.get_required_space(
+            remote_manifest
+        )
+
+        free_space = self.get_free_space()
+
+        print("")
+        print("Required space:", required_space)
+        print("Free space    :", free_space)
+
+        if required_space > free_space:
+
+            print("")
+            print("Not enough space for OTA update.")
+
+            return False
+
+        print("")
+        print("Enough space for OTA update.")
+
+        return True
