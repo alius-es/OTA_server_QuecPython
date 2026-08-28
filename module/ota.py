@@ -508,3 +508,15 @@ class OTA:
             self.calculate_sha256(filename)
             == file_info["sha256"]
         )
+
+    #--------------------------------------------------------------------------
+    # Obtaining free space of /usr folder
+    #--------------------------------------------------------------------------    
+    def get_free_space(self):
+
+        stat = uos.statvfs("/usr")
+
+        block_size = stat[0]
+        free_blocks = stat[3]
+
+        return block_size * free_blocks
