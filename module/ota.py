@@ -151,8 +151,11 @@ class OTA:
 
         response.close()
 
-        return ujson.loads(text)
+        manifest = ujson.loads(text)
 
+        self.manifest_size = len(text.encode("utf-8"))
+
+        return manifest
 
     #--------------------------------------------------------------------------
     # Validate remote manifest
@@ -520,3 +523,41 @@ class OTA:
         free_blocks = stat[3]
 
         return block_size * free_blocks
+
+    #--------------------------------------------------------------------------
+    # Calculate required space for update
+    #--------------------------------------------------------------------------
+    def get_required_space(self, remote_manifest):
+
+        stat = uos.statvfs("/usr")
+
+        block_size = stat[0]
+
+        required_space = 0
+
+        for file_info in remote_manifest["files"]:
+
+            if self.file_is_up_to_date(file_info):
+                continue
+
+            file_size = file_info["size"]
+
+            blocks = (
+                file_size + block_size - 1
+            ) // block_size
+
+            required_space += blocks * block_size
+
+        #----------------------------------------------------------------------
+        # Manifest
+        #----------------------------------------------------------------------
+
+        manifest_size = self.manifest_size
+
+        blocks = (
+            manifest_size + block_size - 1
+        ) // block_size
+
+        required_space += blocks * block_size
+
+        return required_space
