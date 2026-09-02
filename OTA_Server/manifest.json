@@ -1,26 +1,53 @@
 {
     "project": "QuecPython OTA Demo",
-    "version": "1.4.4",
+    "version": "1.4.60",
     "description": "QuecPython OTA Example",
     "build": {
-        "date": "2026-08-10",
-        "time": "11:53:20"
+        "date": "2026-09-02",
+        "time": "16:42:17"
     },
     "files": [
         {
-            "name": "app.py",
-            "path": "/files/app.py",
-            "sha256": "00f7832b5911096adb15c0036a35dc050229405e1ac462305f9b2935aebe1d49"
+            "name": "app.mpy",
+            "path": "/files/app.mpy",
+            "size": 1214,
+            "sha256": "cc590f86f475e6dd10dd2e75d8f786a6aa9e6e4155d6fad3cf8ca2d1082c34a4"
         },
         {
-            "name": "config.py",
-            "path": "/files/config.py",
-            "sha256": "06fa7f1ac3466f52c079f0274833339bb2dec3cc615a2181b04249ffbed135a5"
+            "name": "config.mpy",
+            "path": "/files/config.mpy",
+            "size": 250,
+            "sha256": "05d7564d627d63edd0de93169b8f6122d9243aebb09b0210b349118d9edae64a"
         },
         {
-            "name": "ota.py",
-            "path": "/files/ota.py",
-            "sha256": "9902593479d11f88b51dd54ced8d6bbec765affd84302702311a53e94042252d"
+            "name": "ota.mpy",
+            "path": "/files/ota.mpy",
+            "size": 4813,
+            "sha256": "0dba3183273d6ab22f498ea1bc7b7f9e0a97261779bd0099ae4af27f0369a4b0"
+        },
+        {
+            "name": "test/test.bin",
+            "path": "/files/test/test.bin",
+            "size": 102400,
+            "sha256": "706d4b5620c693138258f21d2552fd527b71af9c500d8cdcf0db9489163674f9"
+        },
+        {
+            "name": "test/test2.bin",
+            "path": "/files/test/test2.bin",
+            "size": 34560,
+            "sha256": "a18caed27c8833b6c63e1521d6a36a25b320699eda8db699a9e4728da0a5ad0a"
+        },
+        {
+            "name": "test/test3.bin",
+            "path": "/files/test/test3.bin",
+            "size": 102400,
+            "sha256": "706d4b5620c693138258f21d2552fd527b71af9c500d8cdcf0db9489163674f9"
+        },
+        {
+            "name": "test/test4.bin",
+            "path": "/files/test/test4.bin",
+            "size": 34560,
+            "sha256": "a18caed27c8833b6c63e1521d6a36a25b320699eda8db699a9e4728da0a5ad0a"
         }
     ]
 }

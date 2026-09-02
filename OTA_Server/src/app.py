@@ -24,8 +24,8 @@
 
 import utime
 import ujson
-from misc import Power
 import ota
+import config
 import checkNet
 
 
@@ -46,7 +46,7 @@ def get_local_manifest():
 
     try:
 
-        with open("/usr/manifest.json", "r") as file:
+        with open(config.LOCAL_MANIFEST_FILE, "r") as file:
 
             return ujson.load(file)
 
@@ -115,9 +115,6 @@ def run():
         ota_client = ota.OTA()
 
         if ota_client.update():
-
-            restart_device()
-
             return
 
     except Exception as e:
@@ -131,18 +128,6 @@ def run():
 
     application_loop()
 
-
-#------------------------------------------------------------------------------
-# Restart device
-#------------------------------------------------------------------------------
-
-def restart_device():
-
-    print("")
-    print("Restarting module...")
-    print("")
-
-    Power.powerRestart()
 
 #------------------------------------------------------------------------------
 # Wait until cellular network is ready

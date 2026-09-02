@@ -5,6 +5,6 @@ in powershell and use address after
 folder 'files' should only have files for updating
 
 manifest.json should not be changed manually, it is generated automatically
-by generate_manifest.py
+by build.py
 
 to change manifest.json manually, use project.json before executing generate_manifest.py
