@@ -37,6 +37,16 @@ import utime
 class OTA:
 
     #--------------------------------------------------------------------------
+    # Constants
+    #--------------------------------------------------------------------------
+
+    APP_DIR = "/usr/app"
+
+    UPDATER_DIR = "/fota/usr/.updater"
+
+    PENDING_FILE = "/usr/pending.json"
+
+    #--------------------------------------------------------------------------
     # Constructor
     #--------------------------------------------------------------------------
 
@@ -382,12 +392,12 @@ class OTA:
 
             download_list.append({
                 "url": self.server + file["path"],
-                "file_name": "/usr/" + file["name"]
+                "file_name": config.APP_DIR + "/" + file["name"]
             })
 
         download_list.append({
             "url": self.manifest_url,
-            "file_name": "/usr/manifest.json"
+            "file_name": config.LOCAL_MANIFEST_FILE
         })
 
         return download_list
@@ -511,7 +521,7 @@ class OTA:
     #--------------------------------------------------------------------------
     def file_is_up_to_date(self, file_info):
 
-        filename = "/usr/" + file_info["name"]
+        filename = config.APP_DIR + "/" + file_info["name"]
 
         if not self.file_exists(filename):
             return False

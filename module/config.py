@@ -2,6 +2,26 @@
 # OTA Configuration
 #==============================================================================
 
-OTA_SERVER = "https://worm-wallpaper-discussed-belle.trycloudflare.com"
 
-LOCAL_MANIFEST_FILE = "/usr/manifest.json"
+OTA_SERVER = "https://matching-gently-estimate-type.trycloudflare.com"
+
+
+#------------------------------------------------------------------------------
+# Application directory
+#------------------------------------------------------------------------------
+
+APP_DIR = "/usr/app"
+
+
+#------------------------------------------------------------------------------
+# Local application manifest
+#------------------------------------------------------------------------------
+
+LOCAL_MANIFEST_FILE = APP_DIR + "/manifest.json"
+
+
+#------------------------------------------------------------------------------
+# Persistent OTA state
+#------------------------------------------------------------------------------
+
+PENDING_FILE = "/usr/pending.json"

@@ -25,6 +25,7 @@
 import utime
 import ujson
 import ota
+import config
 import checkNet
 
 
@@ -45,7 +46,7 @@ def get_local_manifest():
 
     try:
 
-        with open("/usr/manifest.json", "r") as file:
+        with open(config.LOCAL_MANIFEST_FILE, "r") as file:
 
             return ujson.load(file)
 
