@@ -252,13 +252,22 @@ class OTA:
             if (
                 not isinstance(name, str)
                 or not name
-                or "/" in name
+                or name.startswith("/")
+                or name.startswith("\\")
                 or "\\" in name
-                or name in (".", "..")
             ):
+
                 raise ValueError(
                     "Invalid file name: {}".format(name)
                 )
+
+            for part in name.split("/"):
+
+                if part in ("", ".", ".."):
+
+                    raise ValueError(
+                        "Invalid file name: {}".format(name)
+                    )
 
             #------------------------------------------------------------------
             # Path
@@ -267,13 +276,19 @@ class OTA:
             if (
                 not isinstance(path, str)
                 or not path.startswith("/files/")
-                or ".." in path
                 or "\\" in path
             ):
                 raise ValueError(
                     "Invalid file path: {}".format(path)
                 )
 
+            relative_path = path[len("/files/"):]
+
+            for part in relative_path.split("/"):
+                if part in ("", ".", ".."):
+                    raise ValueError(
+                        "Invalid file path: {}".format(path)
+                    )
             #------------------------------------------------------------------
             # Size
             #------------------------------------------------------------------
