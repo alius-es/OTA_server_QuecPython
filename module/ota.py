@@ -2,16 +2,23 @@
 # File: ota.py
 #
 # Description:
-#     OTA (Over-The-Air) update module for QuecPython application files.
+#     OTA (Over-the-Air) update module for QuecPython application files.
 #
-# Responsibilities:
-#     - Connect to OTA server
-#     - Download and parse manifest.json
-#     - Validate manifest
-#     - Compare local and remote versions
-#     - Determine files that require update
-#     - Download update files using app_fota
-#     - Set application update flag
+#     The module performs file-based OTA updates through app_fota.
+#
+#     Update lifecycle:
+#
+#         1. Download and validate remote manifest.
+#         2. Compare remote and local versions.
+#         3. Determine files that require download.
+#         4. Determine obsolete files.
+#         5. Download update files through app_fota.
+#         6. Persist pending.json with the target version and obsolete files.
+#         7. Set the app_fota update flag.
+#         8. Restart the module.
+#         9. After reboot, verify the target version.
+#        10. Delete obsolete files.
+#        11. Remove pending.json only after cleanup succeeds.
 #
 #==============================================================================
 
@@ -30,6 +37,7 @@ import config
 from misc import Power
 import utime
 
+
 #------------------------------------------------------------------------------
 # OTA Class
 #------------------------------------------------------------------------------
@@ -40,11 +48,15 @@ class OTA:
     # Constants
     #--------------------------------------------------------------------------
 
-    APP_DIR = "/usr/app"
+    APP_DIR = config.APP_DIR
 
     UPDATER_DIR = "/fota/usr/.updater"
 
-    PENDING_FILE = "/usr/pending.json"
+    PENDING_FILE = config.PENDING_FILE
+
+    PENDING_TEMP_FILE = PENDING_FILE + ".tmp"
+
+    PENDING_STATE = "pending"
 
     #--------------------------------------------------------------------------
     # Constructor
@@ -55,13 +67,13 @@ class OTA:
         self.server = config.OTA_SERVER
 
         self.manifest_url = self.server + "/manifest.json"
-        
-        self.fota = app_fota.new()
 
+        self.fota = app_fota.new()
 
     #--------------------------------------------------------------------------
     # Perform complete OTA update
     #--------------------------------------------------------------------------
+
     def update(self):
 
         update_info = self.check_update()
@@ -82,6 +94,23 @@ class OTA:
         ):
             return False
 
+        obsolete_files = self.get_obsolete_files(
+            update_info["local_manifest"],
+            update_info["remote_manifest"]
+        )
+
+        print("")
+        print("Obsolete files:", len(obsolete_files))
+
+        for filename in obsolete_files:
+            print("  REMOVE AFTER REBOOT:", filename)
+
+        if not self.create_pending_update(
+            update_info["remote_manifest"]["version"],
+            obsolete_files
+        ):
+            return False
+
         if not self.set_update_flag():
             return False
 
@@ -93,19 +122,384 @@ class OTA:
         utime.sleep(5)
         return
 
+    #--------------------------------------------------------------------------
+    # Process pending update after reboot
+    #
+    # This method must be called before the network/OTA check.
+    #
+    # Returns:
+    #     True  - pending update was processed successfully.
+    #     False - no pending update or cleanup could not be completed.
+    #--------------------------------------------------------------------------
+
+    def process_pending_update(self):
+
+        if not ql_fs.path_exists(self.PENDING_FILE):
+            return True
+
+        print("")
+        print("========================================")
+        print("Checking pending OTA update")
+        print("========================================")
+
+        pending = self.read_pending_update()
+
+        if pending is None:
+            print("")
+            print("Pending update is invalid.")
+            print("Obsolete files will NOT be removed.")
+            return False
+
+        target_version = pending["target_version"]
+
+        local_manifest = self.get_local_manifest()
+
+        local_version = local_manifest["version"]
+
+        print("")
+        print("Pending target version :", target_version)
+        print("Current application    :", local_version)
+
+        # The new application must be installed before any obsolete
+        # files are allowed to be deleted.
+        if local_version != target_version:
+
+            print("")
+            print("Target version is not installed.")
+            print("Keeping pending.json.")
+            print("No obsolete files will be removed.")
+
+            return False
+
+        print("")
+        print("Target version confirmed.")
+        print("Starting obsolete file cleanup.")
+
+        if not self.remove_obsolete_files(
+            pending["obsolete_files"]
+        ):
+            print("")
+            print("Obsolete file cleanup is incomplete.")
+            print("Keeping pending.json for the next startup.")
+
+            return False
+
+        if not self.remove_pending_update():
+            print("")
+            print("Could not remove pending.json.")
+            print("Cleanup was completed; pending state is retained.")
+
+            return False
+
+        print("")
+        print("Pending OTA update completed.")
+        print("Obsolete files removed.")
+        print("Pending state cleared.")
+
+        return True
+
+    #--------------------------------------------------------------------------
+    # Read pending.json
+    #--------------------------------------------------------------------------
+
+    def read_pending_update(self):
+
+        try:
+
+            with open(self.PENDING_FILE, "r") as f:
+                pending = ujson.load(f)
+
+        except Exception as error:
+
+            print("")
+            print("Failed to read pending.json:", error)
+
+            return None
+
+        if not self.validate_pending_update(pending):
+            return None
+
+        return pending
+
+    #--------------------------------------------------------------------------
+    # Validate pending.json
+    #--------------------------------------------------------------------------
+
+    def validate_pending_update(self, pending):
+
+        if not isinstance(pending, dict):
+            return False
+
+        if pending.get("state") != self.PENDING_STATE:
+            return False
+
+        target_version = pending.get("target_version")
+
+        if (
+            not isinstance(target_version, str)
+            or not target_version
+        ):
+            return False
+
+        try:
+            self.parse_version(target_version)
+        except Exception:
+            return False
+
+        obsolete_files = pending.get("obsolete_files")
+
+        if not isinstance(obsolete_files, list):
+            return False
+
+        seen = set()
+
+        for filename in obsolete_files:
+
+            if not self.is_safe_relative_path(filename):
+                return False
+
+            if filename in seen:
+                return False
+
+            seen.add(filename)
+
+        return True
+
+    #--------------------------------------------------------------------------
+    # Create pending.json
+    #
+    # pending.json is written BEFORE the app_fota update flag is set.
+    # Therefore a power loss before the flag is set cannot cause deletion
+    # of obsolete files during the next startup.
+    #--------------------------------------------------------------------------
+
+    def create_pending_update(
+        self,
+        target_version,
+        obsolete_files
+    ):
+
+        pending = {
+            "state": self.PENDING_STATE,
+            "target_version": target_version,
+            "obsolete_files": obsolete_files
+        }
+
+        print("")
+        print("Creating pending OTA state.")
+        print("Target version:", target_version)
+        print("Obsolete files:", len(obsolete_files))
+
+        try:
+
+            # Remove a stale temporary file left by an interrupted write.
+            if ql_fs.path_exists(self.PENDING_TEMP_FILE):
+                print("")
+                print("Removing stale pending temporary file.")
+                uos.remove(self.PENDING_TEMP_FILE)
+
+            with open(self.PENDING_TEMP_FILE, "w") as f:
+                ujson.dump(pending, f)
+                f.flush()
+
+            # Sync the filesystem before making the state visible.
+            try:
+                uos.sync()
+            except Exception:
+                pass
+
+            # Replacing an existing pending state is safe here because
+            # the app_fota update flag has not been set yet.
+            if ql_fs.path_exists(self.PENDING_FILE):
+                uos.remove(self.PENDING_FILE)
+
+            uos.rename(
+                self.PENDING_TEMP_FILE,
+                self.PENDING_FILE
+            )
+
+            if not ql_fs.path_exists(self.PENDING_FILE):
+                raise Exception(
+                    "pending.json was not created"
+                )
+
+            print("")
+            print("pending.json created successfully.")
+
+            return True
+
+        except Exception as error:
+
+            print("")
+            print("Failed to create pending.json:", error)
+
+            # Do not leave a partially prepared temporary state.
+            try:
+                if ql_fs.path_exists(self.PENDING_TEMP_FILE):
+                    uos.remove(self.PENDING_TEMP_FILE)
+            except Exception:
+                pass
+
+            return False
+
+    #--------------------------------------------------------------------------
+    # Remove pending.json
+    #--------------------------------------------------------------------------
+
+    def remove_pending_update(self):
+
+        if not ql_fs.path_exists(self.PENDING_FILE):
+            return True
+
+        try:
+
+            uos.remove(self.PENDING_FILE)
+
+            if ql_fs.path_exists(self.PENDING_FILE):
+                raise Exception(
+                    "pending.json still exists after removal"
+                )
+
+            return True
+
+        except Exception as error:
+
+            print("")
+            print("Failed to remove pending.json:", error)
+
+            return False
+
+    #--------------------------------------------------------------------------
+    # Determine files present in the old manifest but absent from the target
+    # manifest.
+    #--------------------------------------------------------------------------
+
+    def get_obsolete_files(
+        self,
+        local_manifest,
+        remote_manifest
+    ):
+
+        local_files = local_manifest.get("files", [])
+        remote_files = remote_manifest.get("files", [])
+
+        remote_names = set()
+
+        for file_info in remote_files:
+            remote_names.add(file_info["name"])
+
+        obsolete_files = []
+
+        for file_info in local_files:
+
+            name = file_info.get("name")
+
+            if not isinstance(name, str):
+                continue
+
+            if not self.is_safe_relative_path(name):
+                raise ValueError(
+                    "Invalid local manifest file name: {}".format(name)
+                )
+
+            if name not in remote_names:
+                obsolete_files.append(name)
+
+        obsolete_files.sort()
+
+        return obsolete_files
+
+    #--------------------------------------------------------------------------
+    # Remove obsolete files
+    #--------------------------------------------------------------------------
+
+    def remove_obsolete_files(self, obsolete_files):
+
+        if not obsolete_files:
+            print("")
+            print("No obsolete files to remove.")
+            return True
+
+        failed = False
+
+        for filename in obsolete_files:
+
+            if not self.is_safe_relative_path(filename):
+                print("")
+                print("Unsafe obsolete file path:", filename)
+                failed = True
+                continue
+
+            path = self.APP_DIR + "/" + filename
+
+            if not self.file_exists(path):
+                print("")
+                print("Already absent:", filename)
+                continue
+
+            print("")
+            print("Removing obsolete file:", filename)
+
+            try:
+
+                uos.remove(path)
+
+            except Exception as error:
+
+                print(
+                    "Failed to remove {}: {}".format(
+                        filename,
+                        error
+                    )
+                )
+
+                failed = True
+                continue
+
+            if self.file_exists(path):
+
+                print(
+                    "Removal verification failed: {}".format(
+                        filename
+                    )
+                )
+
+                failed = True
+                continue
+
+            print("Removed:", filename)
+
+        return not failed
+
+    #--------------------------------------------------------------------------
+    # Check whether a relative path is safe for use below APP_DIR
+    #--------------------------------------------------------------------------
+
+    def is_safe_relative_path(self, path):
+
+        if not isinstance(path, str) or not path:
+            return False
+
+        if path.startswith("/"):
+            return False
+
+        if path.startswith("\\"):
+            return False
+
+        if "\\" in path:
+            return False
+
+        parts = path.split("/")
+
+        for part in parts:
+
+            if part in ("", ".", ".."):
+                return False
+
+        return True
 
     #--------------------------------------------------------------------------
     # Check OTA server for available update
-    #
-    # Responsibilities:
-    #     - Download manifest.json
-    #     - Parse JSON
-    #     - Validate manifest
-    #     - Read local manifest
-    #     - Compare versions
-    #
-    # Returns:
-    #     Update information or None.
     #--------------------------------------------------------------------------
 
     def check_update(self):
@@ -143,7 +537,6 @@ class OTA:
             "remote_manifest": remote_manifest
         }
 
-
     #--------------------------------------------------------------------------
     # Download manifest.json from OTA server
     #--------------------------------------------------------------------------
@@ -172,29 +565,20 @@ class OTA:
 
         manifest = ujson.loads(text)
 
-        self.manifest_size = len(text.encode("utf-8"))
+        self.manifest_size = len(
+            text.encode("utf-8")
+        )
 
         return manifest
 
     #--------------------------------------------------------------------------
     # Validate remote manifest
-    #
-    # Responsibilities:
-    #     - Validate required fields
-    #     - Validate version
-    #     - Validate files list
-    #     - Validate file names and paths
-    #     - Validate SHA-256 values
     #--------------------------------------------------------------------------
 
     def validate_manifest(self, manifest):
 
         if not isinstance(manifest, dict):
             raise ValueError("Manifest must be an object")
-
-        #----------------------------------------------------------------------
-        # Version
-        #----------------------------------------------------------------------
 
         if "version" not in manifest:
             raise ValueError("Manifest version is missing")
@@ -203,10 +587,6 @@ class OTA:
 
         if not isinstance(version, str) or not version:
             raise ValueError("Manifest version is invalid")
-
-        #----------------------------------------------------------------------
-        # Files
-        #----------------------------------------------------------------------
 
         if "files" not in manifest:
             raise ValueError("Manifest files are missing")
@@ -219,9 +599,7 @@ class OTA:
         if not files:
             raise ValueError("Manifest files list is empty")
 
-        #----------------------------------------------------------------------
-        # File entries
-        #----------------------------------------------------------------------
+        seen_names = set()
 
         for file_info in files:
 
@@ -245,33 +623,10 @@ class OTA:
             size = file_info["size"]
             sha256 = file_info["sha256"]
 
-            #------------------------------------------------------------------
-            # Name
-            #------------------------------------------------------------------
-
-            if (
-                not isinstance(name, str)
-                or not name
-                or name.startswith("/")
-                or name.startswith("\\")
-                or "\\" in name
-            ):
-
+            if not self.is_safe_relative_path(name):
                 raise ValueError(
                     "Invalid file name: {}".format(name)
                 )
-
-            for part in name.split("/"):
-
-                if part in ("", ".", ".."):
-
-                    raise ValueError(
-                        "Invalid file name: {}".format(name)
-                    )
-
-            #------------------------------------------------------------------
-            # Path
-            #------------------------------------------------------------------
 
             if (
                 not isinstance(path, str)
@@ -284,26 +639,30 @@ class OTA:
 
             relative_path = path[len("/files/"):]
 
-            for part in relative_path.split("/"):
-                if part in ("", ".", ".."):
-                    raise ValueError(
-                        "Invalid file path: {}".format(path)
+            if relative_path != name:
+                raise ValueError(
+                    "Manifest name/path mismatch: {} != {}".format(
+                        name,
+                        path
                     )
-            #------------------------------------------------------------------
-            # Size
-            #------------------------------------------------------------------
+                )
 
-            if (
-                not isinstance(size, int)
-                or size < 0
-            ):
+            if not self.is_safe_relative_path(relative_path):
+                raise ValueError(
+                    "Invalid file path: {}".format(path)
+                )
+
+            if name in seen_names:
+                raise ValueError(
+                    "Duplicate file name: {}".format(name)
+                )
+
+            seen_names.add(name)
+
+            if type(size) is not int or size < 0:
                 raise ValueError(
                     "Invalid file size: {}".format(size)
                 )
-
-            #------------------------------------------------------------------
-            # SHA-256
-            #------------------------------------------------------------------
 
             if (
                 not isinstance(sha256, str)
@@ -322,10 +681,10 @@ class OTA:
 
         return True
 
-
     #--------------------------------------------------------------------------
     # Read local manifest
     #--------------------------------------------------------------------------
+
     def get_local_manifest(self):
 
         try:
@@ -344,11 +703,15 @@ class OTA:
                 "files": []
             }
 
-
     #--------------------------------------------------------------------------
     # Check whether an update is available
     #--------------------------------------------------------------------------
-    def is_update_available(self, local_manifest, remote_manifest):
+
+    def is_update_available(
+        self,
+        local_manifest,
+        remote_manifest
+    ):
 
         local_version = self.parse_version(
             local_manifest["version"]
@@ -361,8 +724,9 @@ class OTA:
         return remote_version > local_version
 
     #--------------------------------------------------------------------------
-    # Parsing the version to help method is_update_available
+    # Parse semantic version
     #--------------------------------------------------------------------------
+
     def parse_version(self, version):
 
         parts = version.split(".")
@@ -373,10 +737,13 @@ class OTA:
             )
 
         try:
+
             major = int(parts[0])
             minor = int(parts[1])
             patch = int(parts[2])
-        except:
+
+        except Exception:
+
             raise ValueError(
                 "Invalid version: {}".format(version)
             )
@@ -388,26 +755,29 @@ class OTA:
 
         return (major, minor, patch)
 
-
     #--------------------------------------------------------------------------
     # Build app_fota download list
     #--------------------------------------------------------------------------
+
     def build_download_list(self, remote_manifest):
 
         download_list = []
 
-        for file in remote_manifest["files"]:
+        for file_info in remote_manifest["files"]:
 
-            if self.file_is_up_to_date(file):
+            if self.file_is_up_to_date(file_info):
 
                 print("")
-                print(file["name"], "is up to date.")
+                print(
+                    file_info["name"],
+                    "is up to date."
+                )
 
                 continue
 
             download_list.append({
-                "url": self.server + file["path"],
-                "file_name": config.APP_DIR + "/" + file["name"]
+                "url": self.server + file_info["path"],
+                "file_name": config.APP_DIR + "/" + file_info["name"]
             })
 
         download_list.append({
@@ -420,6 +790,7 @@ class OTA:
     #--------------------------------------------------------------------------
     # Download update files using app_fota
     #--------------------------------------------------------------------------
+
     def download_update(self, remote_manifest):
 
         print("")
@@ -430,13 +801,6 @@ class OTA:
         download_list = self.build_download_list(
             remote_manifest
         )
-
-        if not download_list:
-
-            print("")
-            print("No files need to be downloaded.")
-
-            return True
 
         print("")
         print("Files to download:", len(download_list))
@@ -461,6 +825,7 @@ class OTA:
     #--------------------------------------------------------------------------
     # Set Application FOTA update flag
     #--------------------------------------------------------------------------
+
     def set_update_flag(self):
 
         print("")
@@ -473,21 +838,36 @@ class OTA:
 
         return True
 
-
     #--------------------------------------------------------------------------
     # Clean up previous incomplete Application FOTA
     #--------------------------------------------------------------------------
+
     def cleanup_previous_update(self):
 
-        updater_path = "/fota/usr/.updater"
-
-        if not ql_fs.path_exists(updater_path):
+        if not ql_fs.path_exists(self.UPDATER_DIR):
             return True
 
         print("")
         print("Previous APP FOTA update found.")
 
-        ql_fs.rmdirs(updater_path)
+        try:
+
+            ql_fs.rmdirs(self.UPDATER_DIR)
+
+        except Exception as error:
+
+            print("")
+            print("Failed to remove previous APP FOTA update:")
+            print(error)
+
+            return False
+
+        if ql_fs.path_exists(self.UPDATER_DIR):
+
+            print("")
+            print("Previous APP FOTA update still exists.")
+
+            return False
 
         print("")
         print("Previous APP FOTA update removed.")
@@ -497,18 +877,23 @@ class OTA:
     #--------------------------------------------------------------------------
     # Check whether a file exists
     #--------------------------------------------------------------------------
+
     def file_exists(self, filename):
 
         try:
+
             uos.stat(filename)
+
             return True
 
-        except:
+        except Exception:
+
             return False
 
     #--------------------------------------------------------------------------
     # Calculate SHA-256 of a local file
     #--------------------------------------------------------------------------
+
     def calculate_sha256(self, filename):
 
         sha256 = uhashlib.sha256()
@@ -534,6 +919,7 @@ class OTA:
     #--------------------------------------------------------------------------
     # Check whether local file already matches manifest
     #--------------------------------------------------------------------------
+
     def file_is_up_to_date(self, file_info):
 
         filename = config.APP_DIR + "/" + file_info["name"]
@@ -547,8 +933,9 @@ class OTA:
         )
 
     #--------------------------------------------------------------------------
-    # Obtaining free space of /usr folder
-    #--------------------------------------------------------------------------    
+    # Get free space on /usr
+    #--------------------------------------------------------------------------
+
     def get_free_space(self):
 
         stat = uos.statvfs("/usr")
@@ -559,8 +946,9 @@ class OTA:
         return block_size * free_blocks
 
     #--------------------------------------------------------------------------
-    # Calculate required space for update
+    # Calculate required storage for the update
     #--------------------------------------------------------------------------
+
     def get_required_space(self, remote_manifest):
 
         stat = uos.statvfs("/usr")
@@ -580,11 +968,11 @@ class OTA:
                 file_size + block_size - 1
             ) // block_size
 
-            required_space += blocks * block_size
+            # Every non-empty file consumes at least one filesystem block.
+            if blocks < 1:
+                blocks = 1
 
-        #----------------------------------------------------------------------
-        # Manifest
-        #----------------------------------------------------------------------
+            required_space += blocks * block_size
 
         manifest_size = self.manifest_size
 
@@ -592,13 +980,17 @@ class OTA:
             manifest_size + block_size - 1
         ) // block_size
 
+        if blocks < 1:
+            blocks = 1
+
         required_space += blocks * block_size
 
         return required_space
 
     #--------------------------------------------------------------------------
-    # Check whether enough space is available
+    # Check storage requirements
     #--------------------------------------------------------------------------
+
     def check_storage_requirements(self, remote_manifest):
 
         required_space = self.get_required_space(

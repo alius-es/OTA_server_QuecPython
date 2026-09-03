@@ -9,11 +9,14 @@
 # Startup sequence:
 #
 #     1. Print application information.
-#     2. Check OTA server.
-#     3. Download update if available.
-#     4. Install update.
-#     5. Restart device.
-#     6. Start the main application.
+#     2. Check for a completed pending OTA update.
+#     3. Remove obsolete files only after the target version is confirmed.
+#     4. Check the network.
+#     5. Check OTA server.
+#     6. Download update if available.
+#     7. Install update.
+#     8. Restart device.
+#     9. Start the main application.
 #
 #==============================================================================
 
@@ -32,11 +35,13 @@ import checkNet
 #------------------------------------------------------------------------------
 # Constants
 #------------------------------------------------------------------------------
+
 NETWORK_STAGES = {
     1: "SIM card",
     2: "Network registration",
     3: "PDP context"
 }
+
 
 #------------------------------------------------------------------------------
 # Read local manifest
@@ -50,13 +55,14 @@ def get_local_manifest():
 
             return ujson.load(file)
 
-    except:
+    except Exception:
 
         return {
             "project": "Unknown",
             "version": "Unknown",
             "files": []
         }
+
 
 #------------------------------------------------------------------------------
 # Print application banner
@@ -72,6 +78,7 @@ def print_banner():
     print(" Version     :", manifest["version"])
     print("==================================================")
     print("")
+
 
 #------------------------------------------------------------------------------
 # Main application
@@ -100,6 +107,26 @@ def run():
 
     print_banner()
 
+    try:
+
+        ota_client = ota.OTA()
+
+        #--------------------------------------------------------------
+        # Complete the post-reboot phase of a pending OTA update.
+        #
+        # This is deliberately executed before network initialization.
+        # Cleanup must not depend on the network being available.
+        #--------------------------------------------------------------
+
+        ota_client.process_pending_update()
+
+    except Exception as e:
+
+        print("")
+        print("Pending OTA Error:", e)
+
+        ota_client = None
+
     if not wait_for_network():
 
         print("")
@@ -109,10 +136,11 @@ def run():
         application_loop()
 
         return
-    
+
     try:
 
-        ota_client = ota.OTA()
+        if ota_client is None:
+            ota_client = ota.OTA()
 
         if ota_client.update():
             return
@@ -132,6 +160,7 @@ def run():
 #------------------------------------------------------------------------------
 # Wait until cellular network is ready
 #------------------------------------------------------------------------------
+
 def wait_for_network(timeout=60):
 
     print("")
@@ -146,7 +175,10 @@ def wait_for_network(timeout=60):
         return True
 
     print("Network initialization failed.")
-    print("Failed stage:", NETWORK_STAGES.get(stage, "Unknown"))
+    print(
+        "Failed stage:",
+        NETWORK_STAGES.get(stage, "Unknown")
+    )
     print("State:", state)
 
     return False
