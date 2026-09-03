@@ -46,31 +46,27 @@ from datetime import datetime
 from pathlib import Path
 
 
-#------------------------------------------------------------------------------
-# Configuration
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------------------------
 
 BASE_DIRECTORY = Path(__file__).resolve().parent
 
 PROJECT_FILE = BASE_DIRECTORY / "project.json"
-
 MANIFEST_FILE = BASE_DIRECTORY / "manifest.json"
 
 SOURCE_DIRECTORY = BASE_DIRECTORY / "src"
-
 FILES_DIRECTORY = BASE_DIRECTORY / "files"
 
 MPY_CROSS = BASE_DIRECTORY / "tools" / "mpy-cross-amd64.exe"
 
 
-#------------------------------------------------------------------------------
-# Load project information
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Project
+# ------------------------------------------------------------------------------
 
 def load_project():
-
     with PROJECT_FILE.open("r", encoding="utf-8") as file:
-
         project = json.load(file)
 
     validate_project(project)
@@ -78,87 +74,94 @@ def load_project():
     return project
 
 
-#------------------------------------------------------------------------------
-# Validate project information
-#------------------------------------------------------------------------------
-
 def validate_project(project):
-
     if not isinstance(project, dict):
-        raise ValueError("project.json must contain an object.")
+        raise ValueError("project.json must contain a JSON object.")
 
-    for field in ("project", "version", "description"):
+    required_fields = [
+        "project",
+        "version",
+        "description"
+    ]
 
+    for field in required_fields:
         if field not in project:
             raise ValueError(
                 "Missing field in project.json: {}".format(field)
             )
 
-    version = project["version"]
+    if not isinstance(project["version"], dict):
+        raise ValueError("The 'version' field must be an object.")
 
-    if not isinstance(version, dict):
-        raise ValueError("project.version must be an object.")
+    required_version_fields = [
+        "major",
+        "minor",
+        "patch"
+    ]
 
-    for field in ("major", "minor", "patch"):
-
-        if field not in version:
+    for field in required_version_fields:
+        if field not in project["version"]:
             raise ValueError(
                 "Missing version field: {}".format(field)
             )
 
-        if not isinstance(version[field], int) or version[field] < 0:
+        # bool is a subclass of int in Python, therefore use type() here.
+        if type(project["version"][field]) is not int:
             raise ValueError(
-                "Invalid version field: {}".format(field)
+                "Version field '{}' must be an integer.".format(field)
+            )
+
+        if project["version"][field] < 0:
+            raise ValueError(
+                "Version field '{}' cannot be negative.".format(field)
             )
 
 
-#------------------------------------------------------------------------------
-# Save project information
-#------------------------------------------------------------------------------
-
 def save_project(project):
+    temporary_project = PROJECT_FILE.with_name(
+        PROJECT_FILE.name + ".tmp"
+    )
 
-    with PROJECT_FILE.open("w", encoding="utf-8") as file:
-
-        json.dump(
-            project,
-            file,
-            indent=4
-        )
-
+    with temporary_project.open("w", encoding="utf-8") as file:
+        json.dump(project, file, indent=4)
         file.write("\n")
 
+    temporary_project.replace(PROJECT_FILE)
 
-#------------------------------------------------------------------------------
-# Update version
-#------------------------------------------------------------------------------
 
 def update_version(project):
-
     version = project["version"]
 
-    if "--patch" in sys.argv:
+    flags = [
+        flag
+        for flag in ("--patch", "--minor", "--major")
+        if flag in sys.argv[1:]
+    ]
 
+    if len(flags) > 1:
+        raise ValueError(
+            "Use only one version flag: --patch, --minor or --major."
+        )
+
+    if not flags:
+        return
+
+    flag = flags[0]
+
+    if flag == "--patch":
         version["patch"] += 1
 
-    elif "--minor" in sys.argv:
-
+    elif flag == "--minor":
         version["minor"] += 1
         version["patch"] = 0
 
-    elif "--major" in sys.argv:
-
+    elif flag == "--major":
         version["major"] += 1
         version["minor"] = 0
         version["patch"] = 0
 
 
-#------------------------------------------------------------------------------
-# Version string
-#------------------------------------------------------------------------------
-
 def version_string(project):
-
     version = project["version"]
 
     return "{}.{}.{}".format(
@@ -168,18 +171,15 @@ def version_string(project):
     )
 
 
-#------------------------------------------------------------------------------
-# Calculate SHA-256
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Hash
+# ------------------------------------------------------------------------------
 
 def calculate_sha256(filename):
-
     sha = hashlib.sha256()
 
     with filename.open("rb") as file:
-
         while True:
-
             data = file.read(4096)
 
             if not data:
@@ -190,14 +190,12 @@ def calculate_sha256(filename):
     return sha.hexdigest()
 
 
-#------------------------------------------------------------------------------
-# Validate build tools and source directory
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Environment
+# ------------------------------------------------------------------------------
 
 def validate_environment():
-
     if not SOURCE_DIRECTORY.is_dir():
-
         raise FileNotFoundError(
             "Source directory not found: {}".format(
                 SOURCE_DIRECTORY
@@ -205,7 +203,6 @@ def validate_environment():
         )
 
     if not MPY_CROSS.is_file():
-
         raise FileNotFoundError(
             "mpy-cross executable not found: {}".format(
                 MPY_CROSS
@@ -213,12 +210,11 @@ def validate_environment():
         )
 
 
-#------------------------------------------------------------------------------
-# Compile Python source file
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Compilation
+# ------------------------------------------------------------------------------
 
 def compile_python(source_file, output_file):
-
     output_file.parent.mkdir(
         parents=True,
         exist_ok=True
@@ -237,37 +233,26 @@ def compile_python(source_file, output_file):
     )
 
     if result.returncode != 0:
-
         raise RuntimeError(
             "mpy-cross failed for: {}".format(source_file)
         )
 
 
-#------------------------------------------------------------------------------
-# Build files into temporary directory
-#
-# A temporary directory is used instead of a permanent build/ directory.
-# The final files/ directory is replaced only after all source files have
-# been processed successfully.
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Build files
+# ------------------------------------------------------------------------------
 
 def build_files(temp_directory):
-
     file_count = 0
+    output_paths = set()
 
     for source_file in sorted(SOURCE_DIRECTORY.rglob("*")):
-
         if not source_file.is_file():
             continue
 
         relative_path = source_file.relative_to(SOURCE_DIRECTORY)
 
-        #----------------------------------------------------------------------
-        # Python source -> MPY
-        #----------------------------------------------------------------------
-
         if source_file.suffix.lower() == ".py":
-
             output_relative_path = relative_path.with_suffix(".mpy")
             output_file = temp_directory / output_relative_path
 
@@ -278,174 +263,208 @@ def build_files(temp_directory):
                 output_relative_path
             )
 
-            compile_python(
-                source_file,
-                output_file
-            )
-
-        #----------------------------------------------------------------------
-        # All other files -> copy without modification
-        #----------------------------------------------------------------------
+            compile_python(source_file, output_file)
 
         else:
-
-            output_file = temp_directory / relative_path
+            output_relative_path = relative_path
+            output_file = temp_directory / output_relative_path
 
             output_file.parent.mkdir(
                 parents=True,
                 exist_ok=True
             )
 
-            print(
-                "  COPY    :",
-                relative_path
+            print("  COPY    :", relative_path)
+
+            shutil.copy2(source_file, output_file)
+
+        # Prevent ambiguous source layouts such as:
+        # src/app.py + src/app.mpy -> both produce files/app.mpy.
+        if output_relative_path in output_paths:
+            raise RuntimeError(
+                "Output file collision: {}".format(
+                    output_relative_path
+                )
             )
 
-            shutil.copy2(
-                source_file,
-                output_file
-            )
-
+        output_paths.add(output_relative_path)
         file_count += 1
 
     if file_count == 0:
-
-        raise RuntimeError(
-            "The 'src' directory is empty."
-        )
+        raise RuntimeError("The 'src' directory is empty.")
 
     return file_count
 
 
-#------------------------------------------------------------------------------
-# Build manifest from final OTA files
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Manifest
+# ------------------------------------------------------------------------------
 
 def build_manifest(project, directory):
-
     now = datetime.now()
 
     manifest = {
-
         "project": project["project"],
-
         "version": version_string(project),
-
         "description": project["description"],
-
-        "build":
-        {
+        "build": {
             "date": now.strftime("%Y-%m-%d"),
-
             "time": now.strftime("%H:%M:%S")
         },
-
         "files": []
     }
 
     for file_path in sorted(directory.rglob("*")):
-
         if not file_path.is_file():
             continue
 
         relative_path = file_path.relative_to(directory)
-
-        # HTTP paths must always use '/'.
         relative_name = relative_path.as_posix()
 
         manifest["files"].append({
-
             "name": relative_name,
-
             "path": "/files/" + relative_name,
-
             "size": file_path.stat().st_size,
-
             "sha256": calculate_sha256(file_path)
-
         })
 
     if not manifest["files"]:
-
-        raise RuntimeError(
-            "The build contains no OTA files."
-        )
+        raise RuntimeError("The build contains no OTA files.")
 
     return manifest
 
 
-#------------------------------------------------------------------------------
-# Replace files/ with the successful build
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Transaction
+# ------------------------------------------------------------------------------
 
-def install_files(temp_directory):
-
-    old_directory = None
-
-    if FILES_DIRECTORY.exists():
-
-        old_directory = FILES_DIRECTORY.with_name(
-            FILES_DIRECTORY.name + ".old"
-        )
-
-        if old_directory.exists():
-
-            shutil.rmtree(old_directory)
-
-        FILES_DIRECTORY.rename(old_directory)
-
-    try:
-
-        temp_directory.rename(FILES_DIRECTORY)
-
-    except Exception:
-
-        # Restore the previous files directory if installation failed.
-        if FILES_DIRECTORY.exists():
-
-            shutil.rmtree(FILES_DIRECTORY)
-
-        if old_directory is not None and old_directory.exists():
-
-            old_directory.rename(FILES_DIRECTORY)
-
-        raise
-
-    # The old OTA files are no longer needed.
-    if old_directory is not None and old_directory.exists():
-
-        shutil.rmtree(old_directory)
-
-
-#------------------------------------------------------------------------------
-# Save manifest
-#------------------------------------------------------------------------------
-
-def save_manifest(manifest):
-
-    temporary_manifest = MANIFEST_FILE.with_name(
-        MANIFEST_FILE.name + ".tmp"
+def prepare_json_file(path, data):
+    temporary_file = path.with_name(
+        path.name + ".tmp"
     )
 
-    with temporary_manifest.open("w", encoding="utf-8") as file:
-
-        json.dump(
-            manifest,
-            file,
-            indent=4
-        )
-
+    with temporary_file.open("w", encoding="utf-8") as file:
+        json.dump(data, file, indent=4)
         file.write("\n")
 
-    temporary_manifest.replace(MANIFEST_FILE)
+    return temporary_file
 
 
-#------------------------------------------------------------------------------
+def remove_path(path):
+    if path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
+
+
+def restore_backup(backup, target):
+    if target.exists():
+        remove_path(target)
+
+    if backup.exists():
+        backup.rename(target)
+
+
+def install_build(
+    temp_directory,
+    project,
+    manifest,
+    temporary_project,
+    temporary_manifest
+):
+    files_backup = FILES_DIRECTORY.with_name(
+        FILES_DIRECTORY.name + ".old"
+    )
+
+    project_backup = PROJECT_FILE.with_name(
+        PROJECT_FILE.name + ".old"
+    )
+
+    manifest_backup = MANIFEST_FILE.with_name(
+        MANIFEST_FILE.name + ".old"
+    )
+
+    backups = [
+        (FILES_DIRECTORY, files_backup),
+        (PROJECT_FILE, project_backup),
+        (MANIFEST_FILE, manifest_backup)
+    ]
+
+    # A leftover .old means a previous transaction may not have completed.
+    # Do not silently delete it because it may contain the last known-good build.
+    for _, backup in backups:
+        if backup.exists():
+            raise RuntimeError(
+                "Backup file/directory already exists: {}".format(backup)
+            )
+
+    try:
+        # Move current state out of the way.
+        for target, backup in backups:
+            if target.exists():
+                target.rename(backup)
+
+        # Install the new files and metadata.
+        temp_directory.rename(FILES_DIRECTORY)
+        temporary_project.rename(PROJECT_FILE)
+        temporary_manifest.rename(MANIFEST_FILE)
+
+    except Exception as error:
+        rollback_errors = []
+
+        # Remove whatever part of the new state was installed.
+        for target, _ in backups:
+            try:
+                if target.exists():
+                    remove_path(target)
+            except Exception as rollback_error:
+                rollback_errors.append(
+                    "remove {}: {}".format(target, rollback_error)
+                )
+
+        # Restore the previous state.
+        for target, backup in backups:
+            try:
+                restore_backup(backup, target)
+            except Exception as rollback_error:
+                rollback_errors.append(
+                    "restore {}: {}".format(target, rollback_error)
+                )
+
+        message = "Build installation failed: {}".format(error)
+
+        if rollback_errors:
+            message += (
+                "\nRollback also failed:\n  - "
+                + "\n  - ".join(rollback_errors)
+            )
+
+        raise RuntimeError(message) from error
+
+    # The new state is complete. Old state is no longer needed.
+    cleanup_errors = []
+
+    for _, backup in backups:
+        try:
+            if backup.exists():
+                remove_path(backup)
+        except Exception as error:
+            cleanup_errors.append(
+                "Could not remove backup {}: {}".format(
+                    backup,
+                    error
+                )
+            )
+
+    for message in cleanup_errors:
+        print("WARNING:", message)
+
+
+# ------------------------------------------------------------------------------
 # Main
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 def main():
-
     print()
     print("========================================")
     print("QuecPython OTA Build")
@@ -455,9 +474,6 @@ def main():
     validate_environment()
 
     project = load_project()
-
-    # Work on the loaded project first. project.json is saved only after
-    # the complete build and manifest generation have succeeded.
     update_version(project)
 
     print("Version :", version_string(project))
@@ -466,8 +482,6 @@ def main():
     print("Compiler:", MPY_CROSS)
     print()
 
-    # Temporary directory is outside the project. Therefore there is no
-    # permanent build/ directory.
     with tempfile.TemporaryDirectory(
         prefix=".ota_build_",
         dir=str(BASE_DIRECTORY)
@@ -478,9 +492,7 @@ def main():
         print("Building files...")
         print()
 
-        file_count = build_files(
-            temporary_directory
-        )
+        file_count = build_files(temporary_directory)
 
         print()
         print("Generating manifest...")
@@ -491,49 +503,46 @@ def main():
             temporary_directory
         )
 
-        # Only now replace the currently published OTA files.
-        install_files(
-            temporary_directory
+        # Prepare both JSON files before touching the live files/ directory.
+        temporary_project = prepare_json_file(
+            PROJECT_FILE,
+            project
         )
 
-        # The temporary directory has been moved to files/, so prevent
-        # TemporaryDirectory from trying to remove the moved directory.
-        temporary_directory = None
+        temporary_manifest = prepare_json_file(
+            MANIFEST_FILE,
+            manifest
+        )
 
-    # Save version and manifest only after a successful file build.
-    save_project(project)
-    save_manifest(manifest)
+        print()
+        print("Installing {} files...".format(file_count))
+        print()
+
+        install_build(
+            temporary_directory,
+            project,
+            manifest,
+            temporary_project,
+            temporary_manifest
+        )
 
     print()
-    print("========================================")
-    print("Build completed successfully.")
-    print("========================================")
-    print()
-    print("Version :", manifest["version"])
-    print(
-        "Build   :",
-        manifest["build"]["date"],
-        manifest["build"]["time"]
-    )
+    print("Build successful.")
+    print("Version :", version_string(project))
     print("Files   :", file_count)
-    print("Output  :", FILES_DIRECTORY)
     print()
 
+
+# ------------------------------------------------------------------------------
+# Entry point
+# ------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-
     try:
-
         main()
 
     except Exception as error:
-
         print()
-        print("========================================")
-        print("BUILD FAILED")
-        print("========================================")
-        print()
+        print("BUILD FAILED:")
         print(error)
-        print()
-
         sys.exit(1)
