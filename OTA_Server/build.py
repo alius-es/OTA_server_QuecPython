@@ -116,19 +116,6 @@ def validate_project(project):
                 "Version field '{}' cannot be negative.".format(field)
             )
 
-
-def save_project(project):
-    temporary_project = PROJECT_FILE.with_name(
-        PROJECT_FILE.name + ".tmp"
-    )
-
-    with temporary_project.open("w", encoding="utf-8") as file:
-        json.dump(project, file, indent=4)
-        file.write("\n")
-
-    temporary_project.replace(PROJECT_FILE)
-
-
 def update_version(project):
     version = project["version"]
 
@@ -222,6 +209,7 @@ def compile_python(source_file, output_file):
 
     command = [
         str(MPY_CROSS),
+        "-mno-unicode",
         str(source_file),
         "-o",
         str(output_file)
@@ -367,8 +355,6 @@ def restore_backup(backup, target):
 
 def install_build(
     temp_directory,
-    project,
-    manifest,
     temporary_project,
     temporary_manifest
 ):
@@ -520,8 +506,6 @@ def main():
 
         install_build(
             temporary_directory,
-            project,
-            manifest,
             temporary_project,
             temporary_manifest
         )
