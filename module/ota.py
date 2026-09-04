@@ -180,16 +180,9 @@ class OTA:
             print("Not enough storage for force update.")
             return False
 
-        failed_files = self.download_update(remote_manifest)
-
-        if failed_files:
+        if not self.download_update(remote_manifest):
             print("")
             print("Force update failed.")
-            print("Failed files:")
-
-            for filename in failed_files:
-                print(" - " + filename)
-
             return False
 
         if not self.set_update_flag():
@@ -987,9 +980,13 @@ class OTA:
         print("")
         print("Files to download:", len(download_list))
 
-        result = self.fota.bulk_download(
-            download_list
-        )
+        try:
+            result = self.fota.bulk_download(download_list)
+        except Exception as error:
+            print("")
+            print("APP FOTA download exception:")
+            print(error)
+            return False
 
         if result is not None:
 
