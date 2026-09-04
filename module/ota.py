@@ -62,12 +62,12 @@ class OTA:
     # They are protected from deletion, but may still be replaced by
     # app_fota when the remote manifest contains a newer/different copy.
     PROTECTED_FILES = (
-        "ota.py",
-        "app.py",
-        "config.py",
+        "ota.mpy",
+        "app.mpy",
+        "config.mpy",
         "manifest.json",
     )
-    
+
     #--------------------------------------------------------------------------
     # Constructor
     #--------------------------------------------------------------------------
