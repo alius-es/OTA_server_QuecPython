@@ -168,6 +168,12 @@ class OTA:
         if not self.validate_manifest(remote_manifest):
             return False
 
+        # remove pending.json (if it exists)
+        if not self.remove_pending_update():
+            print("")
+            print("Failed to clear pending update.")
+            return False
+
         # First remove all non-protected application files.
         if not self.remove_unprotected_files():
             print("")
