@@ -58,6 +58,16 @@ class OTA:
 
     PENDING_STATE = "pending"
 
+    # Files which must survive a force update.
+    # They are protected from deletion, but may still be replaced by
+    # app_fota when the remote manifest contains a newer/different copy.
+    PROTECTED_FILES = (
+        "ota.py",
+        "app.py",
+        "config.py",
+        "manifest.json",
+    )
+    
     #--------------------------------------------------------------------------
     # Constructor
     #--------------------------------------------------------------------------
@@ -121,6 +131,178 @@ class OTA:
 
         utime.sleep(5)
         return
+
+
+    #--------------------------------------------------------------------------
+    # Force update
+    #
+    # This is a recovery/update mode.
+    #
+    # 1. Download and validate the remote manifest.
+    # 2. Clean a previous incomplete APP FOTA update.
+    # 3. Delete every file/directory below APP_DIR except PROTECTED_FILES.
+    # 4. Check storage.
+    # 5. Download the complete remote application through app_fota.
+    # 6. Set APP FOTA update flag.
+    # 7. Restart the module.
+    #
+    # Protected files are not deleted. If they are present in the remote
+    # manifest and their contents differ, app_fota is still allowed to update
+    # them.
+    #
+    # No pending.json is created here because obsolete files are deliberately
+    # removed before the forced installation. Protected files are retained.
+    #--------------------------------------------------------------------------
+
+    def force_update(self):
+        print("")
+        print("Starting force update.")
+
+        remote_manifest = self.download_manifest()
+
+        if remote_manifest is None:
+            print("")
+            print("Failed to download remote manifest.")
+            return False
+
+        if not self.validate_manifest(remote_manifest):
+            return False
+
+        # First remove all non-protected application files.
+        if not self.remove_unprotected_files():
+            print("")
+            print("Failed to clean application files.")
+            return False
+
+        # Check storage only after cleanup.
+        if not self.check_storage_requirements(remote_manifest):
+            print("")
+            print("Not enough storage for force update.")
+            return False
+
+        failed_files = self.download_update(remote_manifest)
+
+        if failed_files:
+            print("")
+            print("Force update failed.")
+            print("Failed files:")
+
+            for filename in failed_files:
+                print(" - " + filename)
+
+            return False
+
+        if not self.set_update_flag():
+            print("")
+            print("Failed to set APP FOTA update flag.")
+            return False
+
+        print("")
+        print("Force update prepared successfully.")
+        print("Restarting device.")
+
+        Power.powerRestart()
+
+        return True
+
+    #--------------------------------------------------------------------------
+    # Remove every application file/directory except protected files.
+    #
+    # The operation is recursive and supports nested directories.
+    # Empty directories left after protected files are preserved.
+    #--------------------------------------------------------------------------
+
+    def remove_unprotected_files(self):
+        print("")
+        print("Removing unprotected application files.")
+
+        protected = set(self.PROTECTED_FILES)
+
+        for entry in uos.listdir(self.APP_DIR):
+            path = self.APP_DIR + "/" + entry
+
+            # Keep protected files/directories.
+            if entry in protected:
+                print("Protected:", entry)
+                continue
+
+            if not self.remove_unprotected_path(path, entry, protected):
+                return False
+
+        return True
+
+    #--------------------------------------------------------------------------
+    # Recursively remove a path unless it is protected.
+    #--------------------------------------------------------------------------
+
+    def remove_unprotected_path(self, path, relative_path, protected):
+        # Keep the protected path itself.
+        if relative_path in protected:
+            return True
+
+        # Try to read the directory.
+        # If listdir() fails, treat the path as a file.
+        try:
+            entries = uos.listdir(path)
+            is_directory = True
+        except Exception:
+            is_directory = False
+
+        if not is_directory:
+            try:
+                uos.remove(path)
+            except Exception as error:
+                print("")
+                print("Failed to remove:")
+                print(path)
+                print(error)
+                return False
+
+            if ql_fs.path_exists(path):
+                print("")
+                print("File was not removed:")
+                print(path)
+                return False
+
+            return True
+
+        # Recursively remove directory contents.
+        for entry in entries:
+            child_path = path + "/" + entry
+            child_relative_path = relative_path + "/" + entry
+
+            if not self.remove_unprotected_path(
+                child_path,
+                child_relative_path,
+                protected
+            ):
+                return False
+
+        # Do not remove a directory if it contains
+        # a protected file somewhere inside it.
+        prefix = relative_path + "/"
+
+        for protected_path in protected:
+            if protected_path.startswith(prefix):
+                return True
+
+        # Remove now-empty directory.
+        try:
+            uos.rmdir(path)
+        except Exception as error:
+            print("")
+            print("Failed to remove directory:")
+            print(path)
+            print(error)
+            return False
+
+        if ql_fs.path_exists(path):
+            print("")
+            print("Directory was not removed:")
+            print(path)
+            return False
+
+        return True
 
     #--------------------------------------------------------------------------
     # Process pending update after reboot
