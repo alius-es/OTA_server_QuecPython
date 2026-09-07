@@ -118,12 +118,16 @@ def run():
         # Cleanup must not depend on the network being available.
         #--------------------------------------------------------------
 
-        ota_client.process_pending_update()
+        if not ota_client.process_ota_state():
+            print("")
+            print("OTA state processing failed.")
+            print("Application will not start.")
+            return
 
     except Exception as e:
 
         print("")
-        print("Pending OTA Error:", e)
+        print("OTA state Error:", e)
 
         ota_client = None
 
