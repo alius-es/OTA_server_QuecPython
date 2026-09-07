@@ -34,10 +34,17 @@ import uos
 import uhashlib
 import app_fota
 import ql_fs
-import config
 from misc import Power
 import utime
 import modem
+
+OTA_SERVER = "https://pockets-bass-must-wiring.trycloudflare.com"
+
+APP_DIR = "/usr/app"
+
+LOCAL_MANIFEST_FILE = APP_DIR + "/manifest.json"
+
+OTA_STATE_FILE = "/usr/ota_state.json"
 
 #------------------------------------------------------------------------------
 # OTA Class
@@ -49,11 +56,8 @@ class OTA:
     # Constants
     #--------------------------------------------------------------------------
 
-    APP_DIR = config.APP_DIR
-
     UPDATER_DIR = "/fota/usr/.updater"
 
-    OTA_STATE_FILE = config.OTA_STATE_FILE
     OTA_STATE_TEMP_FILE = OTA_STATE_FILE + ".tmp"
 
     OTA_STATE_PENDING = "pending"
