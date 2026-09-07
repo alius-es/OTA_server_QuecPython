@@ -146,6 +146,20 @@ def run():
         if ota_client is None:
             ota_client = ota.OTA()
 
+        #--------------------------------------------------------------
+        # Report a completed OTA update to the server.
+        #
+        # This is performed before checking for a new update because
+        # ota_state.json blocks a new OTA operation until the previous
+        # result has been reported.
+        #--------------------------------------------------------------
+
+        if not ota_client.report_ota_result():
+
+            print("")
+            print("OTA result reporting failed.")
+            print("The OTA result will be reported again later.")
+
         if ota_client.update():
             return
 

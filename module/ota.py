@@ -79,6 +79,8 @@ class OTA:
 
         self.manifest_url = self.server + "/manifest.json"
 
+        self.report_url = self.server + "/ota/report"
+
         self.fota = app_fota.new()
 
     #--------------------------------------------------------------------------
@@ -102,6 +104,7 @@ class OTA:
             print("Operation:", ota_state["operation"])
             print("State    :", ota_state["state"])
             print("Target   :", ota_state["target_version"])
+            print("Report   :", ota_state["report_sent"])
 
         print("")
         print("New OTA operation is blocked.")
@@ -786,7 +789,285 @@ class OTA:
                 pass
 
             return False
-    
+
+    #--------------------------------------------------------------------------
+    # Mark OTA result as reported to the server.
+    #
+    # The state file is kept until this information is safely persisted.
+    #--------------------------------------------------------------------------
+
+    def mark_ota_reported(self, ota_state):
+
+        ota_state["report_sent"] = True
+
+        try:
+
+            if ql_fs.path_exists(
+                self.OTA_STATE_TEMP_FILE
+            ):
+                uos.remove(
+                    self.OTA_STATE_TEMP_FILE
+                )
+
+            with open(
+                self.OTA_STATE_TEMP_FILE,
+                "w"
+            ) as f:
+
+                ujson.dump(
+                    ota_state,
+                    f
+                )
+
+                f.flush()
+
+            try:
+                uos.sync()
+            except Exception:
+                pass
+
+            if ql_fs.path_exists(
+                self.OTA_STATE_FILE
+            ):
+                uos.remove(
+                    self.OTA_STATE_FILE
+                )
+
+            uos.rename(
+                self.OTA_STATE_TEMP_FILE,
+                self.OTA_STATE_FILE
+            )
+
+            if not ql_fs.path_exists(
+                self.OTA_STATE_FILE
+            ):
+                raise Exception(
+                    "ota_state.json was not saved"
+                )
+
+            print("")
+            print(
+                "OTA report state saved."
+            )
+
+            return True
+
+        except Exception as error:
+
+            print("")
+            print(
+                "Failed to save OTA report state:"
+            )
+            print(error)
+
+            try:
+
+                if ql_fs.path_exists(
+                    self.OTA_STATE_TEMP_FILE
+                ):
+                    uos.remove(
+                        self.OTA_STATE_TEMP_FILE
+                    )
+
+            except Exception:
+                pass
+
+            return False
+
+    #--------------------------------------------------------------------------
+    # Send successful OTA result to the server.
+    #
+    # The OTA state is removed only after:
+    #
+    #     1. Server accepts the report.
+    #     2. Server returns {"ack": true}.
+    #     3. report_sent=True is persisted locally.
+    #
+    # If any step fails, ota_state.json is kept.
+    #--------------------------------------------------------------------------
+
+    def report_ota_result(self):
+
+        if not ql_fs.path_exists(
+            self.OTA_STATE_FILE
+        ):
+            return True
+
+        ota_state = self.read_ota_state()
+
+        if ota_state is None:
+
+            print("")
+            print(
+                "Cannot report invalid ota_state.json."
+            )
+
+            return False
+
+        if ota_state["state"] != self.OTA_STATE_SUCCESS:
+
+            print("")
+            print(
+                "OTA result is not ready for reporting."
+            )
+
+            return False
+
+        #----------------------------------------------------------------------
+        # If the server already acknowledged the report and the device lost
+        # power before removing ota_state.json, do not send it again.
+        #----------------------------------------------------------------------
+
+        if ota_state["report_sent"]:
+
+            print("")
+            print(
+                "OTA report was already acknowledged."
+            )
+
+            print(
+                "Removing ota_state.json."
+            )
+
+            return self.remove_ota_state()
+
+        print("")
+        print("========================================")
+        print("Reporting OTA result")
+        print("========================================")
+
+        print("")
+        print(
+            "POST:",
+            self.report_url
+        )
+
+        try:
+
+            response = request.post(
+                self.report_url,
+                data=ujson.dumps(
+                    ota_state
+                ),
+                headers={
+                    "Content-Type":
+                        "application/json"
+                }
+            )
+
+        except Exception as error:
+
+            print("")
+            print(
+                "OTA report request failed:"
+            )
+            print(error)
+
+            return False
+
+        try:
+
+            if response.status_code != 200:
+
+                print("")
+                print(
+                    "OTA report HTTP error:"
+                )
+                print(
+                    response.status_code
+                )
+
+                return False
+
+            try:
+
+                report_response = response.json()
+
+            except Exception as error:
+
+                print("")
+                print(
+                    "Invalid OTA report response:"
+                )
+                print(error)
+
+                return False
+
+            if not isinstance(
+                report_response,
+                dict
+            ):
+
+                print("")
+                print(
+                    "Invalid OTA report response."
+                )
+
+                return False
+
+            if report_response.get(
+                "ack"
+            ) is not True:
+
+                print("")
+                print(
+                    "OTA report was not acknowledged."
+                )
+
+                return False
+
+        finally:
+
+            try:
+                response.close()
+            except Exception:
+                pass
+
+        print("")
+        print(
+            "OTA report acknowledged by server."
+        )
+
+        #----------------------------------------------------------------------
+        # Persist the acknowledgement before removing the state file.
+        #----------------------------------------------------------------------
+
+        if not self.mark_ota_reported(
+            ota_state
+        ):
+
+            print("")
+            print(
+                "Server acknowledged the OTA result,"
+            )
+            print(
+                "but local report state was not saved."
+            )
+            print(
+                "ota_state.json will be kept."
+            )
+
+            return False
+
+        #----------------------------------------------------------------------
+        # Now it is safe to remove ota_state.json.
+        #----------------------------------------------------------------------
+
+        if not self.remove_ota_state():
+
+            print("")
+            print(
+                "Failed to remove ota_state.json."
+            )
+
+            return False
+
+        print("")
+        print(
+            "OTA result reporting completed."
+        )
+
+        return True
     #--------------------------------------------------------------------------
     # Remove ota_state.json
     #--------------------------------------------------------------------------
