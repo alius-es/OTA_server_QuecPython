@@ -69,7 +69,6 @@ class OTA:
     PROTECTED_FILES = (
         "ota.mpy",
         "app.mpy",
-        "config.mpy",
         "manifest.json",
     )
 
@@ -79,7 +78,7 @@ class OTA:
 
     def __init__(self):
 
-        self.server = config.OTA_SERVER
+        self.server = OTA_SERVER
 
         self.manifest_url = self.server + "/manifest.json"
 
@@ -92,12 +91,12 @@ class OTA:
     # for result reporting.
     #--------------------------------------------------------------------------
 
-    def can_start_ota(self):
+    def _can_start_ota(self):
 
         if not ql_fs.path_exists(self.OTA_STATE_FILE):
             return True
 
-        ota_state = self.read_ota_state()
+        ota_state = self._read_ota_state()
 
         print("")
         print("OTA state already exists.")
@@ -115,35 +114,66 @@ class OTA:
         print("Existing OTA state must be processed first.")
 
         return False
-    
+    #####################################################
+    #------------------ Public API ---------------------#
+    #####################################################
+
+    #--------------------------------------------------------------------------
+    # Process the result of a previously started OTA update.
+    #
+    # This method:
+    #
+    #     1. Processes the OTA state after reboot.
+    #     2. Verifies that the target update was installed successfully.
+    #     3. Removes obsolete files for a normal update.
+    #     4. Marks the OTA state as successful.
+    #     5. Reports the successful OTA result to the server.
+    #
+    # If the OTA update or result reporting fails, ota_state.json is kept
+    # for further processing.
+    #
+    # This method does not start a new OTA update and does not reboot
+    # the device.
+    #
+    #--------------------------------------------------------------------------
+
+    def process_ota(self):
+
+        if not self._process_ota_state():
+            return False
+
+        if not self._report_ota_result():
+            return False
+
+        return True
     #--------------------------------------------------------------------------
     # Perform complete OTA update
     #--------------------------------------------------------------------------
 
     def update(self):
 
-        if not self.can_start_ota():
+        if not self._can_start_ota():
             return False
 
-        update_info = self.check_update()
+        update_info = self._check_update()
 
         if update_info is None:
             return False
 
-        if not self.cleanup_previous_update():
+        if not self._cleanup_previous_update():
             return False
 
-        if not self.check_storage_requirements(
+        if not self._check_storage_requirements(
             update_info["remote_manifest"]
         ):
             return False
 
-        if not self.download_update(
+        if not self._download_update(
             update_info["remote_manifest"]
         ):
             return False
 
-        obsolete_files = self.get_obsolete_files(
+        obsolete_files = self._get_obsolete_files(
             update_info["local_manifest"],
             update_info["remote_manifest"]
         )
@@ -154,14 +184,14 @@ class OTA:
         for filename in obsolete_files:
             print("  REMOVE AFTER REBOOT:", filename)
 
-        if not self.create_ota_state(
+        if not self._create_ota_state(
             "update",
             update_info["remote_manifest"]["version"],
             obsolete_files
         ):
             return False
 
-        if not self.set_update_flag():
+        if not self._set_update_flag():
             return False
 
         print("")
@@ -197,27 +227,27 @@ class OTA:
         print("")
         print("Starting force update.")
 
-        if not self.can_start_ota():
+        if not self._can_start_ota():
             return False
 
-        remote_manifest = self.download_manifest()
+        remote_manifest = self._download_manifest()
 
         if remote_manifest is None:
             print("")
             print("Failed to download remote manifest.")
             return False
 
-        if not self.validate_manifest(remote_manifest):
+        if not self._validate_manifest(remote_manifest):
             return False
 
         # Clean a previous incomplete APP FOTA update before starting
         # a new force update.
-        if not self.cleanup_previous_update():
+        if not self._cleanup_previous_update():
             return False
 
         # Create persistent OTA state BEFORE destructive application
         # cleanup. This protects the operation against power loss.
-        if not self.create_ota_state(
+        if not self._create_ota_state(
             "force_update",
             remote_manifest["version"],
             []
@@ -227,23 +257,23 @@ class OTA:
             return False
 
         # Remove all non-protected application files.
-        if not self.remove_unprotected_files():
+        if not self._remove_unprotected_files():
             print("")
             print("Failed to clean application files.")
             return False
 
         # Check storage only after cleanup.
-        if not self.check_storage_requirements(remote_manifest):
+        if not self._check_storage_requirements(remote_manifest):
             print("")
             print("Not enough storage for force update.")
             return False
 
-        if not self.download_update(remote_manifest):
+        if not self._download_update(remote_manifest):
             print("")
             print("Force update failed.")
             return False
 
-        if not self.set_update_flag():
+        if not self._set_update_flag():
             print("")
             print("Failed to set APP FOTA update flag.")
             return False
@@ -256,6 +286,10 @@ class OTA:
 
         return True
 
+    #####################################################
+    #------------- Internal implementation -------------#
+    #####################################################
+
     #--------------------------------------------------------------------------
     # Verify that the application files match the installed manifest.
     #
@@ -263,12 +297,12 @@ class OTA:
     # may be equal to the version already installed on the device.
     #--------------------------------------------------------------------------
 
-    def verify_force_update(self, target_version):
+    def _verify_force_update(self, target_version):
 
-        local_manifest = self.get_local_manifest()
+        local_manifest = self._get_local_manifest()
 
         try:
-            self.validate_manifest(local_manifest)
+            self._validate_manifest(local_manifest)
         except Exception as error:
             print("")
             print("Local manifest validation failed:")
@@ -288,7 +322,7 @@ class OTA:
 
             filename = file_info["name"]
 
-            if not self.file_is_up_to_date(file_info):
+            if not self._file_is_up_to_date(file_info):
 
                 print("")
                 print("Force update verification failed:")
@@ -308,7 +342,7 @@ class OTA:
     # Empty directories left after protected files are preserved.
     #--------------------------------------------------------------------------
 
-    def remove_unprotected_files(self):
+    def _remove_unprotected_files(self):
         print("")
         print("Removing unprotected application files.")
 
@@ -322,7 +356,7 @@ class OTA:
                 print("Protected:", entry)
                 continue
 
-            if not self.remove_unprotected_path(path, entry, protected):
+            if not self._remove_unprotected_path(path, entry, protected):
                 return False
 
         return True
@@ -331,7 +365,7 @@ class OTA:
     # Recursively remove a path unless it is protected.
     #--------------------------------------------------------------------------
 
-    def remove_unprotected_path(self, path, relative_path, protected):
+    def _remove_unprotected_path(self, path, relative_path, protected):
         # Keep the protected path itself.
         if relative_path in protected:
             return True
@@ -367,7 +401,7 @@ class OTA:
             child_path = path + "/" + entry
             child_relative_path = relative_path + "/" + entry
 
-            if not self.remove_unprotected_path(
+            if not self._remove_unprotected_path(
                 child_path,
                 child_relative_path,
                 protected
@@ -404,7 +438,7 @@ class OTA:
     # Process OTA state after reboot.
     #--------------------------------------------------------------------------
 
-    def process_ota_state(self):
+    def _process_ota_state(self):
 
         if not ql_fs.path_exists(self.OTA_STATE_FILE):
             return True
@@ -414,7 +448,7 @@ class OTA:
         print("Checking OTA state")
         print("========================================")
 
-        ota_state = self.read_ota_state()
+        ota_state = self._read_ota_state()
 
         if ota_state is None:
 
@@ -452,10 +486,10 @@ class OTA:
         # The only remaining state is pending.
         #----------------------------------------------------------------------
 
-        local_manifest = self.get_local_manifest()
+        local_manifest = self._get_local_manifest()
 
         try:
-            self.validate_manifest(local_manifest)
+            self._validate_manifest(local_manifest)
         except Exception as error:
 
             print("")
@@ -494,7 +528,7 @@ class OTA:
             print("")
             print("Starting obsolete file cleanup.")
 
-            if not self.remove_obsolete_files(
+            if not self._remove_obsolete_files(
                 ota_state["obsolete_files"]
             ):
 
@@ -514,7 +548,7 @@ class OTA:
 
         elif operation == "force_update":
 
-            if not self.verify_force_update(
+            if not self._verify_force_update(
                 target_version
             ):
 
@@ -538,7 +572,7 @@ class OTA:
         # Keep ota_state.json for server reporting.
         #----------------------------------------------------------------------
 
-        if not self.mark_ota_success(ota_state):
+        if not self._mark_ota_success(ota_state):
 
             print("")
             print("Failed to save successful OTA state.")
@@ -557,7 +591,7 @@ class OTA:
     # Read ota_state.json
     #--------------------------------------------------------------------------
 
-    def read_ota_state(self):
+    def _read_ota_state(self):
 
         if not ql_fs.path_exists(self.OTA_STATE_FILE):
             return None
@@ -575,7 +609,7 @@ class OTA:
 
             return None
 
-        if not self.validate_ota_state(ota_state):
+        if not self._validate_ota_state(ota_state):
             print("")
             print("Invalid ota_state.json.")
             return None
@@ -586,7 +620,7 @@ class OTA:
     # Validate ota_state.json
     #--------------------------------------------------------------------------
 
-    def validate_ota_state(self, ota_state):
+    def _validate_ota_state(self, ota_state):
 
         if not isinstance(ota_state, dict):
             return False
@@ -625,7 +659,7 @@ class OTA:
             return False
 
         try:
-            self.parse_version(target_version)
+            self._parse_version(target_version)
         except Exception:
             return False
 
@@ -638,7 +672,7 @@ class OTA:
 
         for filename in obsolete_files:
 
-            if not self.is_safe_relative_path(filename):
+            if not self._is_safe_relative_path(filename):
                 return False
 
             if filename in seen:
@@ -671,14 +705,14 @@ class OTA:
     # of obsolete files during the next startup.
     #--------------------------------------------------------------------------
 
-    def create_ota_state(
+    def _create_ota_state(
         self,
         operation,
         target_version,
         obsolete_files
     ):
 
-        imei = self.get_imei()
+        imei = self._get_imei()
 
         if imei is None:
             return False
@@ -746,7 +780,7 @@ class OTA:
             return False
 
     #  save all state in success state
-    def mark_ota_success(self, ota_state):
+    def _mark_ota_success(self, ota_state):
 
         ota_state["state"] = self.OTA_STATE_SUCCESS
         ota_state["report_sent"] = False
@@ -800,7 +834,7 @@ class OTA:
     # The state file is kept until this information is safely persisted.
     #--------------------------------------------------------------------------
 
-    def mark_ota_reported(self, ota_state):
+    def _mark_ota_reported(self, ota_state):
 
         ota_state["report_sent"] = True
 
@@ -890,14 +924,14 @@ class OTA:
     # If any step fails, ota_state.json is kept.
     #--------------------------------------------------------------------------
 
-    def report_ota_result(self):
+    def _report_ota_result(self):
 
         if not ql_fs.path_exists(
             self.OTA_STATE_FILE
         ):
             return True
 
-        ota_state = self.read_ota_state()
+        ota_state = self._read_ota_state()
 
         if ota_state is None:
 
@@ -933,7 +967,7 @@ class OTA:
                 "Removing ota_state.json."
             )
 
-            return self.remove_ota_state()
+            return self._remove_ota_state()
 
         print("")
         print("========================================")
@@ -1036,7 +1070,7 @@ class OTA:
         # Persist the acknowledgement before removing the state file.
         #----------------------------------------------------------------------
 
-        if not self.mark_ota_reported(
+        if not self._mark_ota_reported(
             ota_state
         ):
 
@@ -1057,7 +1091,7 @@ class OTA:
         # Now it is safe to remove ota_state.json.
         #----------------------------------------------------------------------
 
-        if not self.remove_ota_state():
+        if not self._remove_ota_state():
 
             print("")
             print(
@@ -1076,7 +1110,7 @@ class OTA:
     # Remove ota_state.json
     #--------------------------------------------------------------------------
 
-    def remove_ota_state(self):
+    def _remove_ota_state(self):
 
         if not ql_fs.path_exists(self.OTA_STATE_FILE):
             return True
@@ -1105,7 +1139,7 @@ class OTA:
     # manifest.
     #--------------------------------------------------------------------------
 
-    def get_obsolete_files(
+    def _get_obsolete_files(
         self,
         local_manifest,
         remote_manifest
@@ -1128,7 +1162,7 @@ class OTA:
             if not isinstance(name, str):
                 continue
 
-            if not self.is_safe_relative_path(name):
+            if not self._is_safe_relative_path(name):
                 raise ValueError(
                     "Invalid local manifest file name: {}".format(name)
                 )
@@ -1144,7 +1178,7 @@ class OTA:
     # Remove obsolete files
     #--------------------------------------------------------------------------
 
-    def remove_obsolete_files(self, obsolete_files):
+    def _remove_obsolete_files(self, obsolete_files):
 
         if not obsolete_files:
             print("")
@@ -1155,7 +1189,7 @@ class OTA:
 
         for filename in obsolete_files:
 
-            if not self.is_safe_relative_path(filename):
+            if not self._is_safe_relative_path(filename):
                 print("")
                 print("Unsafe obsolete file path:", filename)
                 failed = True
@@ -1163,7 +1197,7 @@ class OTA:
 
             path = self.APP_DIR + "/" + filename
 
-            if not self.file_exists(path):
+            if not self._file_exists(path):
                 print("")
                 print("Already absent:", filename)
                 continue
@@ -1187,7 +1221,7 @@ class OTA:
                 failed = True
                 continue
 
-            if self.file_exists(path):
+            if self._file_exists(path):
 
                 print(
                     "Removal verification failed: {}".format(
@@ -1206,7 +1240,7 @@ class OTA:
     # Check whether a relative path is safe for use below APP_DIR
     #--------------------------------------------------------------------------
 
-    def is_safe_relative_path(self, path):
+    def _is_safe_relative_path(self, path):
 
         if not isinstance(path, str) or not path:
             return False
@@ -1233,24 +1267,24 @@ class OTA:
     # Check OTA server for available update
     #--------------------------------------------------------------------------
 
-    def check_update(self):
+    def _check_update(self):
 
         print("")
         print("========================================")
         print("Checking OTA server")
         print("========================================")
 
-        remote_manifest = self.download_manifest()
+        remote_manifest = self._download_manifest()
 
-        self.validate_manifest(remote_manifest)
+        self._validate_manifest(remote_manifest)
 
-        local_manifest = self.get_local_manifest()
+        local_manifest = self._get_local_manifest()
 
         print("")
         print("Remote version :", remote_manifest["version"])
         print("Local version  :", local_manifest["version"])
 
-        if not self.is_update_available(
+        if not self._is_update_available(
             local_manifest,
             remote_manifest
         ):
@@ -1272,7 +1306,7 @@ class OTA:
     # Download manifest.json from OTA server
     #--------------------------------------------------------------------------
 
-    def download_manifest(self):
+    def _download_manifest(self):
 
         print("")
         print("GET:", self.manifest_url)
@@ -1306,7 +1340,7 @@ class OTA:
     # Validate remote manifest
     #--------------------------------------------------------------------------
 
-    def validate_manifest(self, manifest):
+    def _validate_manifest(self, manifest):
 
         if not isinstance(manifest, dict):
             raise ValueError("Manifest must be an object")
@@ -1354,7 +1388,7 @@ class OTA:
             size = file_info["size"]
             sha256 = file_info["sha256"]
 
-            if not self.is_safe_relative_path(name):
+            if not self._is_safe_relative_path(name):
                 raise ValueError(
                     "Invalid file name: {}".format(name)
                 )
@@ -1378,7 +1412,7 @@ class OTA:
                     )
                 )
 
-            if not self.is_safe_relative_path(relative_path):
+            if not self._is_safe_relative_path(relative_path):
                 raise ValueError(
                     "Invalid file path: {}".format(path)
                 )
@@ -1416,11 +1450,11 @@ class OTA:
     # Read local manifest
     #--------------------------------------------------------------------------
 
-    def get_local_manifest(self):
+    def _get_local_manifest(self):
 
         try:
 
-            with open(config.LOCAL_MANIFEST_FILE, "r") as f:
+            with open(LOCAL_MANIFEST_FILE, "r") as f:
                 return ujson.load(f)
 
         except Exception:
@@ -1438,17 +1472,17 @@ class OTA:
     # Check whether an update is available
     #--------------------------------------------------------------------------
 
-    def is_update_available(
+    def _is_update_available(
         self,
         local_manifest,
         remote_manifest
     ):
 
-        local_version = self.parse_version(
+        local_version = self._parse_version(
             local_manifest["version"]
         )
 
-        remote_version = self.parse_version(
+        remote_version = self._parse_version(
             remote_manifest["version"]
         )
 
@@ -1458,7 +1492,7 @@ class OTA:
     # Parse semantic version
     #--------------------------------------------------------------------------
 
-    def parse_version(self, version):
+    def _parse_version(self, version):
 
         parts = version.split(".")
 
@@ -1490,13 +1524,13 @@ class OTA:
     # Build app_fota download list
     #--------------------------------------------------------------------------
 
-    def build_download_list(self, remote_manifest):
+    def _build_download_list(self, remote_manifest):
 
         download_list = []
 
         for file_info in remote_manifest["files"]:
 
-            if self.file_is_up_to_date(file_info):
+            if self._file_is_up_to_date(file_info):
 
                 print("")
                 print(
@@ -1508,12 +1542,12 @@ class OTA:
 
             download_list.append({
                 "url": self.server + file_info["path"],
-                "file_name": config.APP_DIR + "/" + file_info["name"]
+                "file_name": APP_DIR + "/" + file_info["name"]
             })
 
         download_list.append({
             "url": self.manifest_url,
-            "file_name": config.LOCAL_MANIFEST_FILE
+            "file_name": LOCAL_MANIFEST_FILE
         })
 
         return download_list
@@ -1522,14 +1556,14 @@ class OTA:
     # Download update files using app_fota
     #--------------------------------------------------------------------------
 
-    def download_update(self, remote_manifest):
+    def _download_update(self, remote_manifest):
 
         print("")
         print("========================================")
         print("Downloading update")
         print("========================================")
 
-        download_list = self.build_download_list(
+        download_list = self._build_download_list(
             remote_manifest
         )
 
@@ -1561,7 +1595,7 @@ class OTA:
     # Set Application FOTA update flag
     #--------------------------------------------------------------------------
 
-    def set_update_flag(self):
+    def _set_update_flag(self):
 
         print("")
         print("Setting APP FOTA update flag")
@@ -1577,7 +1611,7 @@ class OTA:
     # Clean up previous incomplete Application FOTA
     #--------------------------------------------------------------------------
 
-    def cleanup_previous_update(self):
+    def _cleanup_previous_update(self):
 
         if not ql_fs.path_exists(self.UPDATER_DIR):
             return True
@@ -1613,7 +1647,7 @@ class OTA:
     # Check whether a file exists
     #--------------------------------------------------------------------------
 
-    def file_exists(self, filename):
+    def _file_exists(self, filename):
 
         try:
 
@@ -1629,7 +1663,7 @@ class OTA:
     # Calculate SHA-256 of a local file
     #--------------------------------------------------------------------------
 
-    def calculate_sha256(self, filename):
+    def _calculate_sha256(self, filename):
 
         sha256 = uhashlib.sha256()
 
@@ -1655,15 +1689,15 @@ class OTA:
     # Check whether local file already matches manifest
     #--------------------------------------------------------------------------
 
-    def file_is_up_to_date(self, file_info):
+    def _file_is_up_to_date(self, file_info):
 
-        filename = config.APP_DIR + "/" + file_info["name"]
+        filename = APP_DIR + "/" + file_info["name"]
 
-        if not self.file_exists(filename):
+        if not self._file_exists(filename):
             return False
 
         return (
-            self.calculate_sha256(filename)
+            self._calculate_sha256(filename)
             == file_info["sha256"]
         )
 
@@ -1671,7 +1705,7 @@ class OTA:
     # Get free space on /usr
     #--------------------------------------------------------------------------
 
-    def get_free_space(self):
+    def _get_free_space(self):
 
         stat = uos.statvfs("/usr")
 
@@ -1684,7 +1718,7 @@ class OTA:
     # Calculate required storage for the update
     #--------------------------------------------------------------------------
 
-    def get_required_space(self, remote_manifest):
+    def _get_required_space(self, remote_manifest):
 
         stat = uos.statvfs("/usr")
 
@@ -1694,7 +1728,7 @@ class OTA:
 
         for file_info in remote_manifest["files"]:
 
-            if self.file_is_up_to_date(file_info):
+            if self._file_is_up_to_date(file_info):
                 continue
 
             file_size = file_info["size"]
@@ -1726,13 +1760,13 @@ class OTA:
     # Check storage requirements
     #--------------------------------------------------------------------------
 
-    def check_storage_requirements(self, remote_manifest):
+    def _check_storage_requirements(self, remote_manifest):
 
-        required_space = self.get_required_space(
+        required_space = self._get_required_space(
             remote_manifest
         )
 
-        free_space = self.get_free_space()
+        free_space = self._get_free_space()
 
         print("")
         print("Required space:", required_space)
@@ -1754,7 +1788,7 @@ class OTA:
     # Get IMEI of radiomodule
     #----------------------------------------------------------------
 
-    def get_imei(self):
+    def _get_imei(self):
         imei = modem.getDevImei()
 
         if not isinstance(imei, str) or len(imei) != 15:
