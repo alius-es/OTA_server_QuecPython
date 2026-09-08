@@ -311,7 +311,7 @@ class OTA:
 
         if local_manifest["version"] != target_version:
             print("")
-            print("Force update target version mismatch.")
+            print("Target version mismatch.")
 
             return False
 
@@ -320,14 +320,7 @@ class OTA:
 
         for file_info in local_manifest["files"]:
 
-            filename = file_info["name"]
-
             if not self._file_is_up_to_date(file_info):
-
-                print("")
-                print("Force update verification failed:")
-                print("File:", filename)
-
                 return False
 
         print("")
@@ -1533,10 +1526,7 @@ class OTA:
             if self._file_is_up_to_date(file_info):
 
                 print("")
-                print(
-                    file_info["name"],
-                    "is up to date."
-                )
+                print(file_info["name"],"is up to date.")
 
                 continue
 
@@ -1694,6 +1684,7 @@ class OTA:
         filename = APP_DIR + "/" + file_info["name"]
 
         if not self._file_exists(filename):
+            print("File:", file_info["name"], "doesn't exist.")
             return False
 
         return (
