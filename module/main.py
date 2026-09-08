@@ -16,7 +16,7 @@
 
 import sys
 
-APP_DIR = "/usr/app"
+APP_DIR = "/usr/managed"
 
 if "/usr" not in sys.path:
     sys.path.append("/usr")

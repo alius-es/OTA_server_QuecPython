@@ -38,9 +38,9 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://pockets-bass-must-wiring.trycloudflare.com"
+OTA_SERVER = "https://rare-stops-promise-kilometers.trycloudflare.com"
 
-APP_DIR = "/usr/app"
+APP_DIR = "/usr/managed"
 
 LOCAL_MANIFEST_FILE = APP_DIR + "/manifest.json"
 
@@ -93,7 +93,7 @@ class OTA:
 
     def _can_start_ota(self):
 
-        if not ql_fs.path_exists(self.OTA_STATE_FILE):
+        if not ql_fs.path_exists(OTA_STATE_FILE):
             return True
 
         ota_state = self._read_ota_state()
@@ -348,8 +348,8 @@ class OTA:
 
         protected = set(self.PROTECTED_FILES)
 
-        for entry in uos.listdir(self.APP_DIR):
-            path = self.APP_DIR + "/" + entry
+        for entry in uos.listdir(APP_DIR):
+            path = APP_DIR + "/" + entry
 
             # Keep protected files/directories.
             if entry in protected:
@@ -440,7 +440,7 @@ class OTA:
 
     def _process_ota_state(self):
 
-        if not ql_fs.path_exists(self.OTA_STATE_FILE):
+        if not ql_fs.path_exists(OTA_STATE_FILE):
             return True
 
         print("")
@@ -593,12 +593,12 @@ class OTA:
 
     def _read_ota_state(self):
 
-        if not ql_fs.path_exists(self.OTA_STATE_FILE):
+        if not ql_fs.path_exists(OTA_STATE_FILE):
             return None
 
         try:
 
-            with open(self.OTA_STATE_FILE, "r") as f:
+            with open(OTA_STATE_FILE, "r") as f:
                 ota_state = ujson.load(f)
 
         except Exception as error:
@@ -747,15 +747,15 @@ class OTA:
             except Exception:
                 pass
 
-            if ql_fs.path_exists(self.OTA_STATE_FILE):
-                uos.remove(self.OTA_STATE_FILE)
+            if ql_fs.path_exists(OTA_STATE_FILE):
+                uos.remove(OTA_STATE_FILE)
 
             uos.rename(
                 self.OTA_STATE_TEMP_FILE,
-                self.OTA_STATE_FILE
+                OTA_STATE_FILE
             )
 
-            if not ql_fs.path_exists(self.OTA_STATE_FILE):
+            if not ql_fs.path_exists(OTA_STATE_FILE):
                 raise Exception(
                     "ota_state.json was not created"
                 )
@@ -799,15 +799,15 @@ class OTA:
             except Exception:
                 pass
 
-            if ql_fs.path_exists(self.OTA_STATE_FILE):
-                uos.remove(self.OTA_STATE_FILE)
+            if ql_fs.path_exists(OTA_STATE_FILE):
+                uos.remove(OTA_STATE_FILE)
 
             uos.rename(
                 self.OTA_STATE_TEMP_FILE,
-                self.OTA_STATE_FILE
+                OTA_STATE_FILE
             )
 
-            if not ql_fs.path_exists(self.OTA_STATE_FILE):
+            if not ql_fs.path_exists(OTA_STATE_FILE):
                 raise Exception(
                     "ota_state.json was not saved"
                 )
@@ -865,19 +865,19 @@ class OTA:
                 pass
 
             if ql_fs.path_exists(
-                self.OTA_STATE_FILE
+                OTA_STATE_FILE
             ):
                 uos.remove(
-                    self.OTA_STATE_FILE
+                    OTA_STATE_FILE
                 )
 
             uos.rename(
                 self.OTA_STATE_TEMP_FILE,
-                self.OTA_STATE_FILE
+                OTA_STATE_FILE
             )
 
             if not ql_fs.path_exists(
-                self.OTA_STATE_FILE
+                OTA_STATE_FILE
             ):
                 raise Exception(
                     "ota_state.json was not saved"
@@ -927,7 +927,7 @@ class OTA:
     def _report_ota_result(self):
 
         if not ql_fs.path_exists(
-            self.OTA_STATE_FILE
+            OTA_STATE_FILE
         ):
             return True
 
@@ -1112,14 +1112,14 @@ class OTA:
 
     def _remove_ota_state(self):
 
-        if not ql_fs.path_exists(self.OTA_STATE_FILE):
+        if not ql_fs.path_exists(OTA_STATE_FILE):
             return True
 
         try:
 
-            uos.remove(self.OTA_STATE_FILE)
+            uos.remove(OTA_STATE_FILE)
 
-            if ql_fs.path_exists(self.OTA_STATE_FILE):
+            if ql_fs.path_exists(OTA_STATE_FILE):
                 raise Exception(
                     "ota_state.json still exists after removal"
                 )
@@ -1195,7 +1195,7 @@ class OTA:
                 failed = True
                 continue
 
-            path = self.APP_DIR + "/" + filename
+            path = APP_DIR + "/" + filename
 
             if not self._file_exists(path):
                 print("")
