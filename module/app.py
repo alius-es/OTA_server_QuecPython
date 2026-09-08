@@ -4,19 +4,15 @@
 # Description:
 #     Main application module.
 #
-#     This module controls the application startup sequence.
+#     This module demonstrates how the OTA library can be integrated
+#     into the application startup sequence.
 #
 # Startup sequence:
 #
 #     1. Print application information.
-#     2. Check for a completed pending OTA update.
-#     3. Remove obsolete files only after the target version is confirmed.
-#     4. Check the network.
-#     5. Check OTA server.
-#     6. Download update if available.
-#     7. Install update.
-#     8. Restart device.
-#     9. Start the main application.
+#     2. Wait for network.
+#     3. Process the result of a previous OTA update.
+#     4. Start the main application.
 #
 #==============================================================================
 
@@ -28,7 +24,6 @@
 import utime
 import ujson
 import ota
-import config
 import checkNet
 
 
@@ -51,7 +46,7 @@ def get_local_manifest():
 
     try:
 
-        with open(config.LOCAL_MANIFEST_FILE, "r") as file:
+        with open(ota.LOCAL_MANIFEST_FILE, "r") as file:
 
             return ujson.load(file)
 
@@ -107,32 +102,8 @@ def run():
 
     print_banner()
 
-    try:
-
-        ota_client = ota.OTA()
-
-        #--------------------------------------------------------------
-        # Complete the post-reboot phase of a pending OTA update.
-        #
-        # This is deliberately executed before network initialization.
-        # Cleanup must not depend on the network being available.
-        #--------------------------------------------------------------
-
-        if not ota_client.process_ota_state():
-            print("")
-            print("OTA state processing failed.")
-            print("Application will not start.")
-            return
-
-    except Exception as e:
-
-        print("")
-        print("OTA state Error:", e)
-
-        ota_client = None
-
     if not wait_for_network():
-
+    
         print("")
         print("Starting application without OTA.")
         print("")
@@ -141,32 +112,28 @@ def run():
 
         return
 
-    try:
+    ota_client = ota.OTA()
 
-        if ota_client is None:
-            ota_client = ota.OTA()
+    #------------------------------------------------------------------
+    # Process a previously started OTA operation.
+    #
+    # If an OTA update was performed before the reboot, this verifies
+    # the result and reports it to the server.
+    #
+    # If reporting fails, ota_state.json is kept and no new OTA update
+    # is started.
+    #------------------------------------------------------------------
 
-        #--------------------------------------------------------------
-        # Report a completed OTA update to the server.
-        #
-        # This is performed before checking for a new update because
-        # ota_state.json blocks a new OTA operation until the previous
-        # result has been reported.
-        #--------------------------------------------------------------
-
-        if not ota_client.report_ota_result():
-
-            print("")
-            print("OTA result reporting failed.")
-            print("The OTA result will be reported again later.")
-
-        if ota_client.update():
-            return
-
-    except Exception as e:
+    if not ota_client.process_ota():
 
         print("")
-        print("OTA Error:", e)
+        print("OTA processing failed.")
+        print("Starting application without new OTA.")
+        print("")
+
+        application_loop()
+
+        return
 
     print("")
     print("Starting application...")
@@ -193,10 +160,7 @@ def wait_for_network(timeout=60):
         return True
 
     print("Network initialization failed.")
-    print(
-        "Failed stage:",
-        NETWORK_STAGES.get(stage, "Unknown")
-    )
+    print("Failed stage:", NETWORK_STAGES.get(stage, "Unknown"))
     print("State:", state)
 
     return False
