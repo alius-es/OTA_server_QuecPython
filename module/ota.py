@@ -286,6 +286,103 @@ class OTA:
 
         return True
 
+    #--------------------------------------------------------------------------
+    # Recover from an incomplete OTA operation.
+    #
+    # This method does not start a new OTA update and does not reboot
+    # the device.
+    #
+    # It is intended for a pending OTA operation that was confirmed
+    # unsuccessful by process_ota().
+    #
+    # The method:
+    #
+    #     1. Checks ota_state.json.
+    #     2. Refuses to recover a successful OTA state.
+    #     3. Removes a previous incomplete APP FOTA update.
+    #     4. Removes the pending OTA state.
+    #
+    # After successful recovery, the application developer may explicitly
+    # start a new update using update() or force_update().
+    #
+    #--------------------------------------------------------------------------
+
+    def recover_ota(self):
+
+        print("")
+        print("Starting OTA recovery.")
+
+        #----------------------------------------------------------------------
+        # No OTA state means there is nothing to recover.
+        #----------------------------------------------------------------------
+
+        if not ql_fs.path_exists(OTA_STATE_FILE):
+
+            print("")
+            print("No OTA state found.")
+            print("Nothing to recover.")
+
+            return True
+
+        #----------------------------------------------------------------------
+        # Read and validate the existing OTA state.
+        #----------------------------------------------------------------------
+
+        ota_state = self._read_ota_state()
+
+        if ota_state is None:
+
+            print("")
+            print("OTA state is invalid.")
+            print("Recovery aborted.")
+
+            return False
+
+        print("")
+        print("Operation:", ota_state["operation"])
+        print("State    :", ota_state["state"])
+        print("Target   :", ota_state["target_version"])
+
+        #----------------------------------------------------------------------
+        # A successful OTA must not be discarded by recovery.
+        #
+        # It must first be processed and reported using process_ota().
+        #----------------------------------------------------------------------
+
+        if ota_state["state"] == self.OTA_STATE_SUCCESS:
+
+            print("")
+            print("OTA operation was already completed successfully.")
+            print("Recovery is not allowed.")
+            print("Use process_ota() to finish result reporting.")
+
+            return False
+
+        #----------------------------------------------------------------------
+        # Only a pending operation can be recovered.
+        #----------------------------------------------------------------------
+
+        if ota_state["state"] != self.OTA_STATE_PENDING:
+
+            print("")
+            print("OTA state cannot be recovered.")
+
+            return False
+
+        if not self._cleanup_previous_update():
+            return False
+
+
+        if not self._remove_ota_state():
+            return False
+
+        print("")
+        print("OTA recovery completed successfully.")
+        print("A new OTA operation may now be started.")
+
+        return True
+
+    
     #####################################################
     #------------- Internal implementation -------------#
     #####################################################
