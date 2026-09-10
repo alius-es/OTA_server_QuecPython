@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://rare-stops-promise-kilometers.trycloudflare.com"
+OTA_SERVER = "https://ruth-population-mountains-homes.trycloudflare.com"
 
 APP_DIR = "/usr/managed"
 
@@ -1803,7 +1803,21 @@ class OTA:
         return block_size * free_blocks
 
     #--------------------------------------------------------------------------
-    # Calculate required storage for the update
+    # Calculate exact target-side storage required for an APP FOTA update.
+    #
+    # EG915U uses /fota/usr/.updater as a separate staging filesystem.
+    # Therefore this calculation is for the /usr target filesystem only.
+    #
+    # The calculation includes:
+    #
+    #     1. Exact littleFS 1.x CTZ allocation for large files.
+    #     2. One complete block for files <= block_size.
+    #     3. Two metadata blocks for every NEW directory.
+    #     4. The manifest block, because _build_download_list()
+    #        always downloads manifest.json.
+    #
+    # It does NOT add an arbitrary safety percentage.
+    #
     #--------------------------------------------------------------------------
 
     def _get_required_space(self, remote_manifest):
@@ -1812,35 +1826,241 @@ class OTA:
 
         block_size = stat[0]
 
-        required_space = 0
+        # littleFS uses 32-bit block pointers.
+        ctz_pointer_size = 4
 
-        for file_info in remote_manifest["files"]:
+        #----------------------------------------------------------------------
+        # Count set bits.
+        #
+        # Used by the exact CTZ pointer-count formula:
+        #
+        #     P(k) = 2 * (k - 1) - __popcount(k - 1)
+        #
+        #----------------------------------------------------------------------
 
-            if self._file_is_up_to_date(file_info):
-                continue
+        def __popcount(value):
 
-            file_size = file_info["size"]
+            count = 0
 
-            blocks = (
+            while value:
+
+                count += value & 1
+                value >>= 1
+
+            return count
+
+        #----------------------------------------------------------------------
+        # Calculate exact physical allocation of one file.
+        #
+        # Returns:
+        #
+        #     physical_space
+        #     block_count
+        #     ctz_pointer_count
+        #
+        # For littleFS 1.x:
+        #
+        #     file <= one block -> exactly one block
+        #
+        # For a CTZ file:
+        #
+        #     block i (i > 0) contains:
+        #
+        #         ctz(i) + 1
+        #
+        #     32-bit pointers.
+        #
+        #----------------------------------------------------------------------
+
+        def __get_file_storage(file_size):
+
+            # Empty and small files occupy one complete block
+            # in Quectel's littleFS 1.x configuration.
+            if file_size <= block_size:
+
+                return (
+                    block_size,
+                    1,
+                    0
+                )
+
+            # First approximation.
+            block_count = (
                 file_size + block_size - 1
             ) // block_size
 
-            # Every non-empty file consumes at least one filesystem block.
-            if blocks < 1:
-                blocks = 1
+            while True:
 
-            required_space += blocks * block_size
+                # Number of CTZ pointers in blocks 1 ... N-1.
+                #
+                # Sum(ctz(i) + 1)
+                #     =
+                # 2 * (N - 1) - __popcount(N - 1)
+                #
+                m = block_count - 1
+
+                pointer_count = (
+                    2 * m
+                    - __popcount(m)
+                )
+
+                pointer_space = (
+                    pointer_count
+                    * ctz_pointer_size
+                )
+
+                data_capacity = (
+                    block_count
+                    * block_size
+                    - pointer_space
+                )
+
+                if data_capacity >= file_size:
+
+                    break
+
+                block_count += 1
+
+            physical_space = (
+                block_count
+                * block_size
+            )
+
+            return (
+                physical_space,
+                block_count,
+                pointer_count
+            )
+
+        #----------------------------------------------------------------------
+        # Calculate storage required by files.
+        #----------------------------------------------------------------------
+
+        required_blocks = 0
+
+        # Keep track of directories only once.
+        new_directories = set()
+
+        for file_info in remote_manifest["files"]:
+
+            # Files whose SHA-256 already matches the target are not
+            # downloaded by _build_download_list(), so they require
+            # no new target-side allocation.
+            if self._file_is_up_to_date(file_info):
+                continue
+
+            filename = file_info["name"]
+            file_size = file_info["size"]
+
+            (
+                physical_space,
+                block_count,
+                pointer_count
+            ) = __get_file_storage(file_size)
+
+            required_blocks += block_count
+
+            print("")
+            print("Storage calculation:")
+            print("  File           :", filename)
+            print("  File size      :", file_size)
+            print("  Blocks         :", block_count)
+            print("  CTZ pointers   :", pointer_count)
+            print("  Physical space :", physical_space)
+
+            #------------------------------------------------------------------
+            # Find every parent directory required by this file.
+            #
+            # Example:
+            #
+            # test3/test3/test3.bin
+            #
+            # requires:
+            #
+            #     /usr/managed/test3
+            #     /usr/managed/test3/test3
+            #
+            #------------------------------------------------------------------
+
+            parts = filename.split("/")
+
+            current_path = APP_DIR
+
+            for directory in parts[:-1]:
+
+                current_path += "/" + directory
+
+                if not self._file_exists(current_path):
+
+                    new_directories.add(
+                        current_path
+                    )
+
+        #----------------------------------------------------------------------
+        # manifest.json is ALWAYS downloaded by _build_download_list().
+        #
+        # It is not part of remote_manifest["files"].
+        #----------------------------------------------------------------------
 
         manifest_size = self.manifest_size
 
-        blocks = (
-            manifest_size + block_size - 1
-        ) // block_size
+        (
+            manifest_space,
+            manifest_blocks,
+            manifest_pointers
+        ) = __get_file_storage(
+            manifest_size
+        )
 
-        if blocks < 1:
-            blocks = 1
+        required_blocks += manifest_blocks
 
-        required_space += blocks * block_size
+        print("")
+        print("Storage calculation:")
+        print("  File           : manifest.json")
+        print("  File size      :", manifest_size)
+        print("  Blocks         :", manifest_blocks)
+        print("  CTZ pointers   :", manifest_pointers)
+        print("  Physical space :", manifest_space)
+
+        #----------------------------------------------------------------------
+        # Every NEW directory requires one metadata pair = two blocks.
+        #----------------------------------------------------------------------
+
+        directory_blocks = (
+            len(new_directories) * 2
+        )
+
+        required_blocks += directory_blocks
+
+        if new_directories:
+
+            print("")
+            print("New directories:")
+
+            for directory in new_directories:
+                print("  ", directory)
+
+            print(
+                "Directory blocks:",
+                directory_blocks
+            )
+
+        #----------------------------------------------------------------------
+        # Convert blocks to bytes.
+        #----------------------------------------------------------------------
+
+        required_space = (
+            required_blocks
+            * block_size
+        )
+
+        print("")
+        print("========================================")
+        print("Storage calculation")
+        print("========================================")
+        print("Block size       :", block_size)
+        print("Required blocks  :", required_blocks)
+        print("Required space   :", required_space)
 
         return required_space
 
