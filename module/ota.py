@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://ruth-population-mountains-homes.trycloudflare.com"
+OTA_SERVER = "https://platinum-ripe-married-truck.trycloudflare.com"
 
 APP_DIR = "/usr/managed"
 
@@ -1834,11 +1834,11 @@ class OTA:
         #
         # Used by the exact CTZ pointer-count formula:
         #
-        #     P(k) = 2 * (k - 1) - __popcount(k - 1)
+        #     P(k) = 2 * (k - 1) - _popcount(k - 1)
         #
         #----------------------------------------------------------------------
 
-        def __popcount(value):
+        def _popcount(value):
 
             count = 0
 
@@ -1872,7 +1872,7 @@ class OTA:
         #
         #----------------------------------------------------------------------
 
-        def __get_file_storage(file_size):
+        def _get_file_storage(file_size):
 
             # Empty and small files occupy one complete block
             # in Quectel's littleFS 1.x configuration.
@@ -1895,13 +1895,13 @@ class OTA:
                 #
                 # Sum(ctz(i) + 1)
                 #     =
-                # 2 * (N - 1) - __popcount(N - 1)
+                # 2 * (N - 1) - _popcount(N - 1)
                 #
                 m = block_count - 1
 
                 pointer_count = (
                     2 * m
-                    - __popcount(m)
+                    - _popcount(m)
                 )
 
                 pointer_space = (
@@ -1956,7 +1956,7 @@ class OTA:
                 physical_space,
                 block_count,
                 pointer_count
-            ) = __get_file_storage(file_size)
+            ) = _get_file_storage(file_size)
 
             required_blocks += block_count
 
@@ -2008,7 +2008,7 @@ class OTA:
             manifest_space,
             manifest_blocks,
             manifest_pointers
-        ) = __get_file_storage(
+        ) = _get_file_storage(
             manifest_size
         )
 
