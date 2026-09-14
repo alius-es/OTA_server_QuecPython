@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://platinum-ripe-married-truck.trycloudflare.com"
+OTA_SERVER = "https://xbox-active-devon-consist.trycloudflare.com"
 
 APP_DIR = "/usr/managed"
 
@@ -206,19 +206,16 @@ class OTA:
     #--------------------------------------------------------------------------
     # Force update
     #
-    # This is a recovery/update mode.
-    #
     # 1. Download and validate the remote manifest.
     # 2. Clean a previous incomplete APP FOTA update.
-    # 3. Delete every file/directory below APP_DIR except PROTECTED_FILES.
-    # 4. Check storage.
-    # 5. Download the complete remote application through app_fota.
-    # 6. Set APP FOTA update flag.
-    # 7. Restart the module.
-    #
-    # Protected files are not deleted. If they are present in the remote
-    # manifest and their contents differ, app_fota is still allowed to update
-    # them.
+    # 3. Check whether enough storage will be available after removing
+    #    non-protected application files.
+    # 4. Create persistent OTA state.
+    # 5. Delete every file/directory below APP_DIR except PROTECTED_FILES.
+    # 6. Check actual storage after cleanup.
+    # 7. Download the complete remote application through app_fota.
+    # 8. Set APP FOTA update flag.
+    # 9. Restart the module.
     #
     #--------------------------------------------------------------------------
 
@@ -245,6 +242,35 @@ class OTA:
         if not self._cleanup_previous_update():
             return False
 
+        #----------------------------------------------------------------------
+        # PRE-FLIGHT STORAGE CHECK
+        #----------------------------------------------------------------------
+
+        required_space = self._get_required_space(
+            remote_manifest,
+            force=True
+        )
+
+        free_space = self._get_free_space()
+        reclaimable_space = self._get_reclaimable_space()
+
+        expected_free_space = (
+            free_space + reclaimable_space
+        )
+
+        print("")
+        print("Force update storage pre-flight:")
+        print("  Required space :", required_space)
+        print("  Free space     :", free_space)
+        print("  Reclaimable    :", reclaimable_space)
+        print("  Expected free  :", expected_free_space)
+
+        if expected_free_space < required_space:
+
+            print("")
+            print("Not enough storage for force update.")
+            return False
+        
         # Create persistent OTA state BEFORE destructive application
         # cleanup. This protects the operation against power loss.
         if not self._create_ota_state(
@@ -262,7 +288,11 @@ class OTA:
             print("Failed to clean application files.")
             return False
 
-        # Check storage only after cleanup.
+        #----------------------------------------------------------------------
+        # FINAL STORAGE CHECK
+        #
+        # This uses the actual filesystem state after cleanup.
+        #----------------------------------------------------------------------
         if not self._check_storage_requirements(remote_manifest):
             print("")
             print("Not enough storage for force update.")
@@ -1802,267 +1832,238 @@ class OTA:
 
         return block_size * free_blocks
 
+
     #--------------------------------------------------------------------------
-    # Calculate exact target-side storage required for an APP FOTA update.
-    #
-    # EG915U uses /fota/usr/.updater as a separate staging filesystem.
-    # Therefore this calculation is for the /usr target filesystem only.
-    #
-    # The calculation includes:
-    #
-    #     1. Exact littleFS 1.x CTZ allocation for large files.
-    #     2. One complete block for files <= block_size.
-    #     3. Two metadata blocks for every NEW directory.
-    #     4. The manifest block, because _build_download_list()
-    #        always downloads manifest.json.
-    #
-    # It does NOT add an arbitrary safety percentage.
-    #
+    # Get filesystem block size.
     #--------------------------------------------------------------------------
 
-    def _get_required_space(self, remote_manifest):
+    def _get_block_size(self):
 
-        stat = uos.statvfs("/usr")
+        return uos.statvfs("/usr")[0]
 
-        block_size = stat[0]
+    #--------------------------------------------------------------------------
+    # Count set bits.
+    #
+    # Used by the exact CTZ pointer-count formula:
+    #
+    #     P(k) = 2 * (k - 1) - popcount(k - 1)
+    #
+    #--------------------------------------------------------------------------
 
-        # littleFS uses 32-bit block pointers.
-        ctz_pointer_size = 4
+    def _popcount(self, value):
 
-        #----------------------------------------------------------------------
-        # Count set bits.
-        #
-        # Used by the exact CTZ pointer-count formula:
-        #
-        #     P(k) = 2 * (k - 1) - _popcount(k - 1)
-        #
-        #----------------------------------------------------------------------
+        count = 0
 
-        def _popcount(value):
+        while value:
 
-            count = 0
+            count += value & 1
+            value >>= 1
 
-            while value:
+        return count
 
-                count += value & 1
-                value >>= 1
+    #--------------------------------------------------------------------------
+    # Calculate physical filesystem allocation of one file.
+    #
+    # littleFS 1.x:
+    #
+    #     file <= one block -> one block
+    #
+    # For CTZ files, the data blocks also contain 32-bit CTZ pointers.
+    #--------------------------------------------------------------------------
 
-            return count
+    def _get_file_storage(self, file_size, block_size):
 
-        #----------------------------------------------------------------------
-        # Calculate exact physical allocation of one file.
-        #
-        # Returns:
-        #
-        #     physical_space
-        #     block_count
-        #     ctz_pointer_count
-        #
-        # For littleFS 1.x:
-        #
-        #     file <= one block -> exactly one block
-        #
-        # For a CTZ file:
-        #
-        #     block i (i > 0) contains:
-        #
-        #         ctz(i) + 1
-        #
-        #     32-bit pointers.
-        #
-        #----------------------------------------------------------------------
+        if file_size <= block_size:
+            return block_size
 
-        def _get_file_storage(file_size):
+        block_count = (
+            file_size + block_size - 1
+        ) // block_size
 
-            # Empty and small files occupy one complete block
-            # in Quectel's littleFS 1.x configuration.
-            if file_size <= block_size:
+        while True:
 
-                return (
-                    block_size,
-                    1,
-                    0
-                )
+            m = block_count - 1
 
-            # First approximation.
-            block_count = (
-                file_size + block_size - 1
-            ) // block_size
-
-            while True:
-
-                # Number of CTZ pointers in blocks 1 ... N-1.
-                #
-                # Sum(ctz(i) + 1)
-                #     =
-                # 2 * (N - 1) - _popcount(N - 1)
-                #
-                m = block_count - 1
-
-                pointer_count = (
-                    2 * m
-                    - _popcount(m)
-                )
-
-                pointer_space = (
-                    pointer_count
-                    * ctz_pointer_size
-                )
-
-                data_capacity = (
-                    block_count
-                    * block_size
-                    - pointer_space
-                )
-
-                if data_capacity >= file_size:
-
-                    break
-
-                block_count += 1
-
-            physical_space = (
-                block_count
-                * block_size
+            pointer_count = (
+                2 * m - self._popcount(m)
             )
 
-            return (
-                physical_space,
-                block_count,
-                pointer_count
+            data_capacity = (
+                block_count * block_size
+                - pointer_count * 4
             )
 
-        #----------------------------------------------------------------------
-        # Calculate storage required by files.
-        #----------------------------------------------------------------------
+            if data_capacity >= file_size:
+                return block_count * block_size
 
-        required_blocks = 0
+            block_count += 1
 
-        # Keep track of directories only once.
+    #--------------------------------------------------------------------------
+    # Calculate storage required for the update.
+    #--------------------------------------------------------------------------
+
+    def _get_required_space(self, remote_manifest, force=False):
+
+        block_size = self._get_block_size()
+        required_space = 0
         new_directories = set()
+        protected = set(self.PROTECTED_FILES)
 
         for file_info in remote_manifest["files"]:
 
-            # Files whose SHA-256 already matches the target are not
-            # downloaded by _build_download_list(), so they require
-            # no new target-side allocation.
             if self._file_is_up_to_date(file_info):
-                continue
+                if (not force) or (file_info["name"] in protected):
+                    continue
 
-            filename = file_info["name"]
-            file_size = file_info["size"]
-
-            (
-                physical_space,
-                block_count,
-                pointer_count
-            ) = _get_file_storage(file_size)
-
-            required_blocks += block_count
-
-            print("")
-            print("Storage calculation:")
-            print("  File           :", filename)
-            print("  File size      :", file_size)
-            print("  Blocks         :", block_count)
-            print("  CTZ pointers   :", pointer_count)
-            print("  Physical space :", physical_space)
-
-            #------------------------------------------------------------------
-            # Find every parent directory required by this file.
-            #
-            # Example:
-            #
-            # test3/test3/test3.bin
-            #
-            # requires:
-            #
-            #     /usr/managed/test3
-            #     /usr/managed/test3/test3
-            #
-            #------------------------------------------------------------------
-
-            parts = filename.split("/")
+            required_space += self._get_file_storage(
+                file_info["size"],
+                block_size
+            )
 
             current_path = APP_DIR
 
-            for directory in parts[:-1]:
+            for directory in file_info["name"].split("/")[:-1]:
 
                 current_path += "/" + directory
 
                 if not self._file_exists(current_path):
+                    new_directories.add(current_path)
 
-                    new_directories.add(
-                        current_path
-                    )
-
-        #----------------------------------------------------------------------
-        # manifest.json is ALWAYS downloaded by _build_download_list().
-        #
-        # It is not part of remote_manifest["files"].
-        #----------------------------------------------------------------------
-
-        manifest_size = self.manifest_size
-
-        (
-            manifest_space,
-            manifest_blocks,
-            manifest_pointers
-        ) = _get_file_storage(
-            manifest_size
+        required_space += self._get_file_storage(
+            self.manifest_size,
+            block_size
         )
 
-        required_blocks += manifest_blocks
-
-        print("")
-        print("Storage calculation:")
-        print("  File           : manifest.json")
-        print("  File size      :", manifest_size)
-        print("  Blocks         :", manifest_blocks)
-        print("  CTZ pointers   :", manifest_pointers)
-        print("  Physical space :", manifest_space)
-
-        #----------------------------------------------------------------------
-        # Every NEW directory requires one metadata pair = two blocks.
-        #----------------------------------------------------------------------
-
-        directory_blocks = (
-            len(new_directories) * 2
+        required_space += (
+            len(new_directories) * 2 * block_size
         )
-
-        required_blocks += directory_blocks
-
-        if new_directories:
-
-            print("")
-            print("New directories:")
-
-            for directory in new_directories:
-                print("  ", directory)
-
-            print(
-                "Directory blocks:",
-                directory_blocks
-            )
-
-        #----------------------------------------------------------------------
-        # Convert blocks to bytes.
-        #----------------------------------------------------------------------
-
-        required_space = (
-            required_blocks
-            * block_size
-        )
-
-        print("")
-        print("========================================")
-        print("Storage calculation")
-        print("========================================")
-        print("Block size       :", block_size)
-        print("Required blocks  :", required_blocks)
-        print("Required space   :", required_space)
 
         return required_space
+
+    #--------------------------------------------------------------------------
+    # Calculate storage that will be released by removing
+    # all non-protected application files and directories.
+    #--------------------------------------------------------------------------
+
+    def _get_reclaimable_space(self):
+
+        block_size = self._get_block_size()
+        protected = set(self.PROTECTED_FILES)
+
+        def _get_path_storage(path, relative_path):
+
+            if relative_path in protected:
+                return (0, True)
+
+            try:
+                entries = uos.ilistdir(path)
+
+            except Exception:
+                return (0, False)
+
+            storage = 0
+            contains_protected = False
+
+            for entry in entries:
+
+                name = entry[0]
+                entry_type = entry[1]
+
+                child_path = path + "/" + name
+                child_relative_path = relative_path + "/" + name
+
+                if entry_type == 0x4000:
+
+                    child_storage, child_protected = (
+                        _get_path_storage(
+                            child_path,
+                            child_relative_path
+                        )
+                    )
+
+                elif entry_type == 0x8000:
+
+                    if child_relative_path in protected:
+                        child_storage = 0
+                        child_protected = True
+
+                    else:
+
+                        try:
+                            file_size = uos.stat(
+                                child_path
+                            )[6]
+
+                            child_storage = (
+                                self._get_file_storage(
+                                    file_size,
+                                    block_size
+                                )
+                            )
+
+                            child_protected = False
+
+                        except Exception:
+                            child_storage = 0
+                            child_protected = False
+
+                else:
+
+                    child_storage = 0
+                    child_protected = False
+
+                storage += child_storage
+
+                if child_protected:
+                    contains_protected = True
+
+            if contains_protected:
+                return (storage, True)
+
+            return (
+                storage + (2 * block_size),
+                False
+            )
+
+        reclaimable_space = 0
+
+        for entry in uos.ilistdir(APP_DIR):
+
+            name = entry[0]
+            entry_type = entry[1]
+
+            if name in protected:
+                continue
+
+            path = APP_DIR + "/" + name
+
+            if entry_type == 0x4000:
+
+                storage, contains_protected = (
+                    _get_path_storage(
+                        path,
+                        name
+                    )
+                )
+
+                reclaimable_space += storage
+
+            elif entry_type == 0x8000:
+
+                try:
+                    file_size = uos.stat(path)[6]
+
+                    reclaimable_space += (
+                        self._get_file_storage(
+                            file_size,
+                            block_size
+                        )
+                    )
+
+                except Exception:
+                    pass
+
+        return reclaimable_space
 
     #--------------------------------------------------------------------------
     # Check storage requirements
