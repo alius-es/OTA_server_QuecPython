@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://xbox-active-devon-consist.trycloudflare.com"
+OTA_SERVER = "https://mirror-victory-relaxation-vincent.trycloudflare.com"
 
 APP_DIR = "/usr/managed"
 
@@ -51,6 +51,16 @@ OTA_STATE_FILE = "/usr/ota_state.json"
 #------------------------------------------------------------------------------
 
 class OTA:
+
+    #--------------------------------------------------------------------------
+    # Public result codes
+    #--------------------------------------------------------------------------
+
+    class Result:
+
+        SUCCESS = 0
+        FAILED = 1
+        RECOVERY_REQUIRED = 2
 
     #--------------------------------------------------------------------------
     # Constants
@@ -129,8 +139,12 @@ class OTA:
     #     4. Marks the OTA state as successful.
     #     5. Reports the successful OTA result to the server.
     #
-    # If the OTA update or result reporting fails, ota_state.json is kept
-    # for further processing.
+    # Return values:
+    #     Result.SUCCESS             - no pending OTA or OTA completed.
+    #     Result.FAILED              - processing/reporting could not finish;
+    #                                   retry process_ota().
+    #     Result.RECOVERY_REQUIRED   - installation was not confirmed;
+    #                                   recover_ota() is required.
     #
     # This method does not start a new OTA update and does not reboot
     # the device.
@@ -139,13 +153,16 @@ class OTA:
 
     def process_ota(self):
 
-        if not self._process_ota_state():
-            return False
+        result = self._process_ota_state()
+
+        if result != self.Result.SUCCESS:
+            return result
 
         if not self._report_ota_result():
-            return False
+            return self.Result.FAILED
 
-        return True
+        return self.Result.SUCCESS
+    
     #--------------------------------------------------------------------------
     # Perform complete OTA update
     #--------------------------------------------------------------------------
@@ -200,7 +217,7 @@ class OTA:
         Power.powerRestart()
 
         utime.sleep(5)
-        return
+        return True
 
 
     #--------------------------------------------------------------------------
@@ -286,6 +303,10 @@ class OTA:
         if not self._remove_unprotected_files():
             print("")
             print("Failed to clean application files.")
+            print("Starting OTA recovery.")
+
+            self.recover_ota()
+
             return False
 
         #----------------------------------------------------------------------
@@ -314,6 +335,7 @@ class OTA:
 
         Power.powerRestart()
 
+        utime.sleep(5)
         return True
 
     #--------------------------------------------------------------------------
@@ -364,9 +386,19 @@ class OTA:
 
             print("")
             print("OTA state is invalid.")
-            print("Recovery aborted.")
+            print("Starting emergency recovery.")
 
-            return False
+            if not self._cleanup_previous_update():
+                return False
+
+            if not self._remove_ota_state():
+                return False
+
+            print("")
+            print("Emergency OTA recovery completed.")
+            print("A new OTA operation may now be started.")
+
+            return True
 
         print("")
         print("Operation:", ota_state["operation"])
@@ -418,41 +450,23 @@ class OTA:
     #####################################################
 
     #--------------------------------------------------------------------------
-    # Verify that the application files match the installed manifest.
-    #
-    # This is especially important for force_update because the target version
-    # may be equal to the version already installed on the device.
+    # Verify that all installed application files match the manifest.
     #--------------------------------------------------------------------------
 
-    def _verify_force_update(self, target_version):
-
-        local_manifest = self._get_local_manifest()
-
-        try:
-            self._validate_manifest(local_manifest)
-        except Exception as error:
-            print("")
-            print("Local manifest validation failed:")
-            print(error)
-            return False
-
-        if local_manifest["version"] != target_version:
-            print("")
-            print("Target version mismatch.")
-
-            return False
+    def _verify_ota_installation(self, manifest):
 
         print("")
-        print("Verifying force update files.")
+        print("Verifying OTA files.")
 
-        for file_info in local_manifest["files"]:
+        for file_info in manifest["files"]:
 
             if not self._file_is_up_to_date(file_info):
+                print("")
+                print("File verification failed:", file_info["name"])
                 return False
 
         print("")
-        print("Force update files verified.")
-
+        print("OTA files verified.")
         return True
 
     #--------------------------------------------------------------------------
@@ -561,7 +575,7 @@ class OTA:
     def _process_ota_state(self):
 
         if not ql_fs.path_exists(OTA_STATE_FILE):
-            return True
+            return self.Result.SUCCESS
 
         print("")
         print("========================================")
@@ -571,12 +585,9 @@ class OTA:
         ota_state = self._read_ota_state()
 
         if ota_state is None:
-
             print("")
             print("OTA state is invalid.")
-            print("No OTA cleanup will be performed.")
-
-            return False
+            return self.Result.RECOVERY_REQUIRED
 
         operation = ota_state["operation"]
         state = ota_state["state"]
@@ -588,62 +599,57 @@ class OTA:
         print("Target version        :", target_version)
         print("Report sent           :", ota_state["report_sent"])
 
-        #----------------------------------------------------------------------
-        # OTA was already successfully completed.
-        #
-        # Keep ota_state.json until the result is reported to the server.
-        #----------------------------------------------------------------------
+        #------------------------------------------------------------------
+        # Installation was already verified. Only result reporting remains.
+        #------------------------------------------------------------------
 
         if state == self.OTA_STATE_SUCCESS:
-
             print("")
             print("OTA update already completed.")
             print("Waiting for OTA result reporting.")
+            return self.Result.SUCCESS
 
-            return True
-
-        #----------------------------------------------------------------------
-        # The only remaining state is pending.
-        #----------------------------------------------------------------------
+        #------------------------------------------------------------------
+        # Verify the actual installed application against its manifest.
+        # A version match alone is not sufficient.
+        #------------------------------------------------------------------
 
         local_manifest = self._get_local_manifest()
 
         try:
             self._validate_manifest(local_manifest)
         except Exception as error:
-
             print("")
             print("Local manifest validation failed:")
             print(error)
-
             print("")
-            print("Keeping ota_state.json.")
-            print("No OTA cleanup will be performed.")
-
-            return False
+            print("OTA recovery is required.")
+            return self.Result.RECOVERY_REQUIRED
 
         local_version = local_manifest["version"]
 
         print("")
         print("Current application    :", local_version)
 
-        #----------------------------------------------------------------------
-        # Normal update.
-        #----------------------------------------------------------------------
+        if local_version != target_version:
+            print("")
+            print("Target version is not installed.")
+            print("")
+            print("OTA recovery is required.")
+            return self.Result.RECOVERY_REQUIRED
+
+        if not self._verify_ota_installation(local_manifest):
+            print("")
+            print("OTA installation verification failed.")
+            print("")
+            print("OTA recovery is required.")
+            return self.Result.RECOVERY_REQUIRED
+
+        #------------------------------------------------------------------
+        # Normal update removes only files known to be obsolete.
+        #------------------------------------------------------------------
 
         if operation == "update":
-
-            if local_version != target_version:
-
-                print("")
-                print("Target version is not installed.")
-                print("Keeping ota_state.json.")
-                print("No obsolete files will be removed.")
-
-                return False
-
-            print("")
-            print("Target version confirmed.")
 
             print("")
             print("Starting obsolete file cleanup.")
@@ -651,61 +657,33 @@ class OTA:
             if not self._remove_obsolete_files(
                 ota_state["obsolete_files"]
             ):
-
                 print("")
                 print("Obsolete file cleanup is incomplete.")
                 print("Keeping ota_state.json.")
+                return self.Result.FAILED
 
-                return False
-
-        #----------------------------------------------------------------------
-        # Force update.
-        #
-        # Version equality alone is not enough because force_update may be
-        # requested when the same version is already installed.
-        # Verify every installed application file using SHA-256.
-        #----------------------------------------------------------------------
-
-        elif operation == "force_update":
-
-            if not self._verify_force_update(
-                target_version
-            ):
-
-                print("")
-                print("Force update verification failed.")
-                print("Keeping ota_state.json.")
-
-                return False
-
-        else:
-
+        elif operation != "force_update":
             print("")
             print("Unknown OTA operation.")
             print("Keeping ota_state.json.")
+            return self.Result.FAILED
 
-            return False
-
-        #----------------------------------------------------------------------
-        # Installation is confirmed successful.
-        #
-        # Keep ota_state.json for server reporting.
-        #----------------------------------------------------------------------
+        #------------------------------------------------------------------
+        # Installation is confirmed. Keep state until reporting succeeds.
+        #------------------------------------------------------------------
 
         if not self._mark_ota_success(ota_state):
-
             print("")
             print("Failed to save successful OTA state.")
             print("Keeping ota_state.json.")
-
-            return False
+            return self.Result.FAILED
 
         print("")
         print("OTA update completed successfully.")
         print("OTA state changed to success.")
         print("OTA result is ready for server reporting.")
 
-        return True
+        return self.Result.SUCCESS
 
     #--------------------------------------------------------------------------
     # Read ota_state.json
@@ -1056,18 +1034,14 @@ class OTA:
         if ota_state is None:
 
             print("")
-            print(
-                "Cannot report invalid ota_state.json."
-            )
+            print("Cannot report invalid ota_state.json.")
 
             return False
 
         if ota_state["state"] != self.OTA_STATE_SUCCESS:
 
             print("")
-            print(
-                "OTA result is not ready for reporting."
-            )
+            print("OTA result is not ready for reporting.")
 
             return False
 
@@ -1079,13 +1053,9 @@ class OTA:
         if ota_state["report_sent"]:
 
             print("")
-            print(
-                "OTA report was already acknowledged."
-            )
+            print("OTA report was already acknowledged.")
 
-            print(
-                "Removing ota_state.json."
-            )
+            print("Removing ota_state.json.")
 
             return self._remove_ota_state()
 
@@ -1116,9 +1086,7 @@ class OTA:
         except Exception as error:
 
             print("")
-            print(
-                "OTA report request failed:"
-            )
+            print("OTA report request failed:")
             print(error)
 
             return False
@@ -1128,12 +1096,8 @@ class OTA:
             if response.status_code != 200:
 
                 print("")
-                print(
-                    "OTA report HTTP error:"
-                )
-                print(
-                    response.status_code
-                )
+                print("OTA report HTTP error:")
+                print(response.status_code)
 
                 return False
 
@@ -1144,9 +1108,7 @@ class OTA:
             except Exception as error:
 
                 print("")
-                print(
-                    "Invalid OTA report response:"
-                )
+                print("Invalid OTA report response:")
                 print(error)
 
                 return False
@@ -1157,9 +1119,7 @@ class OTA:
             ):
 
                 print("")
-                print(
-                    "Invalid OTA report response."
-                )
+                print("Invalid OTA report response.")
 
                 return False
 
@@ -1168,9 +1128,7 @@ class OTA:
             ) is not True:
 
                 print("")
-                print(
-                    "OTA report was not acknowledged."
-                )
+                print("OTA report was not acknowledged.")
 
                 return False
 
@@ -1182,28 +1140,18 @@ class OTA:
                 pass
 
         print("")
-        print(
-            "OTA report acknowledged by server."
-        )
+        print("OTA report acknowledged by server.")
 
         #----------------------------------------------------------------------
         # Persist the acknowledgement before removing the state file.
         #----------------------------------------------------------------------
 
-        if not self._mark_ota_reported(
-            ota_state
-        ):
+        if not self._mark_ota_reported(ota_state):
 
             print("")
-            print(
-                "Server acknowledged the OTA result,"
-            )
-            print(
-                "but local report state was not saved."
-            )
-            print(
-                "ota_state.json will be kept."
-            )
+            print("Server acknowledged the OTA result,")
+            print("but local report state was not saved.")
+            print("ota_state.json will be kept.")
 
             return False
 
@@ -1214,16 +1162,12 @@ class OTA:
         if not self._remove_ota_state():
 
             print("")
-            print(
-                "Failed to remove ota_state.json."
-            )
+            print("Failed to remove ota_state.json.")
 
             return False
 
         print("")
-        print(
-            "OTA result reporting completed."
-        )
+        print("OTA result reporting completed.")
 
         return True
     #--------------------------------------------------------------------------
@@ -1472,6 +1416,11 @@ class OTA:
 
         if not isinstance(version, str) or not version:
             raise ValueError("Manifest version is invalid")
+
+        try:
+            self._parse_version(manifest["version"])
+        except Exception:
+            raise ValueError("manifest parse_version check failed")
 
         if "files" not in manifest:
             raise ValueError("Manifest files are missing")
@@ -1952,6 +1901,7 @@ class OTA:
 
         def _get_path_storage(path, relative_path):
 
+            # A protected path and everything below it must remain.
             if relative_path in protected:
                 return (0, True)
 
@@ -1959,6 +1909,8 @@ class OTA:
                 entries = uos.ilistdir(path)
 
             except Exception:
+                # If the directory cannot be read, do not count any
+                # space as reclaimable.
                 return (0, False)
 
             storage = 0
@@ -1972,6 +1924,7 @@ class OTA:
                 child_path = path + "/" + name
                 child_relative_path = relative_path + "/" + name
 
+                # QuecPython ilistdir(): 0x4000 = directory.
                 if entry_type == 0x4000:
 
                     child_storage, child_protected = (
@@ -1981,6 +1934,7 @@ class OTA:
                         )
                     )
 
+                # QuecPython ilistdir(): 0x8000 = regular file.
                 elif entry_type == 0x8000:
 
                     if child_relative_path in protected:
@@ -2004,11 +1958,13 @@ class OTA:
                             child_protected = False
 
                         except Exception:
+                            # Unknown file size means its storage cannot be
+                            # safely counted as reclaimable.
                             child_storage = 0
                             child_protected = False
 
                 else:
-
+                    # Unknown entry types are not counted as reclaimable.
                     child_storage = 0
                     child_protected = False
 
@@ -2018,8 +1974,12 @@ class OTA:
                     contains_protected = True
 
             if contains_protected:
+                # The directory itself must remain because it contains
+                # a protected path, so its directory blocks are retained.
                 return (storage, True)
 
+            # A removable directory also releases its two littleFS
+            # directory blocks.
             return (
                 storage + (2 * block_size),
                 False
@@ -2037,17 +1997,17 @@ class OTA:
 
             path = APP_DIR + "/" + name
 
+            # 0x4000 = directory.
             if entry_type == 0x4000:
 
-                storage, contains_protected = (
-                    _get_path_storage(
-                        path,
-                        name
-                    )
+                storage, _ = _get_path_storage(
+                    path,
+                    name
                 )
 
                 reclaimable_space += storage
 
+            # 0x8000 = regular file.
             elif entry_type == 0x8000:
 
                 try:
@@ -2061,6 +2021,8 @@ class OTA:
                     )
 
                 except Exception:
+                    # If the size cannot be read, do not overestimate
+                    # reclaimable space.
                     pass
 
         return reclaimable_space
