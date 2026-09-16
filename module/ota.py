@@ -477,21 +477,40 @@ class OTA:
     #--------------------------------------------------------------------------
 
     def _remove_unprotected_files(self):
+
         print("")
         print("Removing unprotected application files.")
 
+        if not ql_fs.path_exists(APP_DIR):
+            return True
+
         protected = set(self.PROTECTED_FILES)
 
-        for entry in uos.listdir(APP_DIR):
-            path = APP_DIR + "/" + entry
+        try:
+            for entry in uos.ilistdir(APP_DIR):
 
-            # Keep protected files/directories.
-            if entry in protected:
-                print("Protected:", entry)
-                continue
+                name = entry[0]
+                entry_type = entry[1]
 
-            if not self._remove_unprotected_path(path, entry, protected):
-                return False
+                if name in protected:
+                    print("Protected:", name)
+                    continue
+
+                path = APP_DIR + "/" + name
+
+                if not self._remove_unprotected_path(
+                    path,
+                    name,
+                    entry_type,
+                    protected
+                ):
+                    return False
+
+        except Exception as error:
+            print("")
+            print("Failed to read application directory:")
+            print(error)
+            return False
 
         return True
 
@@ -499,25 +518,26 @@ class OTA:
     # Recursively remove a path unless it is protected.
     #--------------------------------------------------------------------------
 
-    def _remove_unprotected_path(self, path, relative_path, protected):
-        # Keep the protected path itself.
+    def _remove_unprotected_path(
+        self,
+        path,
+        relative_path,
+        entry_type,
+        protected
+    ):
+
         if relative_path in protected:
             return True
 
-        # Try to read the directory.
-        # If listdir() fails, treat the path as a file.
-        try:
-            entries = uos.listdir(path)
-            is_directory = True
-        except Exception:
-            is_directory = False
+        # Regular file.
+        if entry_type == 0x8000:
 
-        if not is_directory:
             try:
                 uos.remove(path)
+
             except Exception as error:
                 print("")
-                print("Failed to remove:")
+                print("Failed to remove file:")
                 print(path)
                 print(error)
                 return False
@@ -530,29 +550,48 @@ class OTA:
 
             return True
 
-        # Recursively remove directory contents.
-        for entry in entries:
-            child_path = path + "/" + entry
-            child_relative_path = relative_path + "/" + entry
+        # Do not guess unknown object types.
+        if entry_type != 0x4000:
+            print("")
+            print("Unsupported filesystem object:")
+            print(path)
+            return False
 
-            if not self._remove_unprotected_path(
-                child_path,
-                child_relative_path,
-                protected
-            ):
-                return False
+        # Directory.
+        try:
+            for entry in uos.ilistdir(path):
 
-        # Do not remove a directory if it contains
-        # a protected file somewhere inside it.
+                child_name = entry[0]
+                child_type = entry[1]
+
+                child_path = path + "/" + child_name
+                child_relative_path = relative_path + "/" + child_name
+
+                if not self._remove_unprotected_path(
+                    child_path,
+                    child_relative_path,
+                    child_type,
+                    protected
+                ):
+                    return False
+
+        except Exception as error:
+            print("")
+            print("Failed to read directory:")
+            print(path)
+            print(error)
+            return False
+
+        # Preserve a directory containing a protected descendant.
         prefix = relative_path + "/"
 
         for protected_path in protected:
             if protected_path.startswith(prefix):
                 return True
 
-        # Remove now-empty directory.
         try:
             uos.rmdir(path)
+
         except Exception as error:
             print("")
             print("Failed to remove directory:")
