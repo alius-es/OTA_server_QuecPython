@@ -215,9 +215,15 @@ def compile_python(source_file, output_file):
         exist_ok=True
     )
 
+    relative_path = source_file.relative_to(SOURCE_DIRECTORY)
+
+    runtime_source = "/usr/" + relative_path.as_posix()
+
     command = [
         str(MPY_CROSS),
         "-mno-unicode",
+        "-s",
+        runtime_source,
         str(source_file),
         "-o",
         str(output_file)
