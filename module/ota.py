@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://mirror-victory-relaxation-vincent.trycloudflare.com"
+OTA_SERVER = "https://constraint-specs-advertisements-power.trycloudflare.com"
 
 APP_DIR = "/usr/managed"
 
@@ -183,7 +183,13 @@ class OTA:
         if not self._check_storage_requirements(
             update_info["remote_manifest"]
         ):
-            return False
+            print("")
+            print("Normal OTA does not fit in /usr.")
+            print("Starting force update.")
+
+            return self._start_force_update(
+                update_info["remote_manifest"]
+            )
 
         if not self._download_update(
             update_info["remote_manifest"]
@@ -219,45 +225,7 @@ class OTA:
         utime.sleep(5)
         return True
 
-
-    #--------------------------------------------------------------------------
-    # Force update
-    #
-    # 1. Download and validate the remote manifest.
-    # 2. Clean a previous incomplete APP FOTA update.
-    # 3. Check whether enough storage will be available after removing
-    #    non-protected application files.
-    # 4. Create persistent OTA state.
-    # 5. Delete every file/directory below APP_DIR except PROTECTED_FILES.
-    # 6. Check actual storage after cleanup.
-    # 7. Download the complete remote application through app_fota.
-    # 8. Set APP FOTA update flag.
-    # 9. Restart the module.
-    #
-    #--------------------------------------------------------------------------
-
-    def force_update(self):
-
-        print("")
-        print("Starting force update.")
-
-        if not self._can_start_ota():
-            return False
-
-        remote_manifest = self._download_manifest()
-
-        if remote_manifest is None:
-            print("")
-            print("Failed to download remote manifest.")
-            return False
-
-        if not self._validate_manifest(remote_manifest):
-            return False
-
-        # Clean a previous incomplete APP FOTA update before starting
-        # a new force update.
-        if not self._cleanup_previous_update():
-            return False
+    def _start_force_update(self, remote_manifest):
 
         #----------------------------------------------------------------------
         # PRE-FLIGHT STORAGE CHECK
@@ -305,8 +273,6 @@ class OTA:
             print("Failed to clean application files.")
             print("Starting OTA recovery.")
 
-            self.recover_ota()
-
             return False
 
         #----------------------------------------------------------------------
@@ -337,6 +303,81 @@ class OTA:
 
         utime.sleep(5)
         return True
+
+        
+    #--------------------------------------------------------------------------
+    # Force update
+    #--------------------------------------------------------------------------
+
+    def force_update(self, same_version=False):
+
+        print("")
+        print("Starting force update.")
+
+        if not self._can_start_ota():
+            return False
+
+        remote_manifest = self._download_manifest()
+
+        if remote_manifest is None:
+            print("")
+            print("Failed to download remote manifest.")
+            return False
+        
+        try:
+            self._validate_manifest(remote_manifest)
+        except Exception as error:
+            print("")
+            print("Remote manifest validation failed:")
+            print(error)
+            return False
+        
+        local_manifest = self._get_local_manifest()
+
+        try:
+            self._validate_manifest(local_manifest)
+        except Exception as error:
+            print("")
+            print("Local manifest validation failed:")
+            print(error)
+            return False
+
+        # Clean a previous incomplete APP FOTA update before starting
+        # a new force update.
+        if not self._cleanup_previous_update():
+            return False
+
+        local_version = self._parse_version(
+            local_manifest["version"]
+        )
+
+        remote_version = self._parse_version(
+            remote_manifest["version"]
+        )
+
+        # Downgrade not allowed
+        if remote_version < local_version:
+
+            print("")
+            print("Remote version is older than current version.")
+            print("Force update aborted.")
+
+            return False
+
+        if (
+            local_version == remote_version
+            and not same_version
+        ):
+
+            print("")
+            print("Application is already at this version.")
+            print("Force update skipped.")
+
+            return False
+
+        return self._start_force_update(
+            remote_manifest
+        )
 
     #--------------------------------------------------------------------------
     # Recover from an incomplete OTA operation.
@@ -1379,9 +1420,28 @@ class OTA:
 
         remote_manifest = self._download_manifest()
 
-        self._validate_manifest(remote_manifest)
+        if remote_manifest is None:
+            print("")
+            print("Failed to download remote manifest.")
+            return False
+        
+        try:
+            self._validate_manifest(remote_manifest)
+        except Exception as error:
+            print("")
+            print("Remote manifest validation failed:")
+            print(error)
+            return False
 
         local_manifest = self._get_local_manifest()
+
+        try:
+            self._validate_manifest(local_manifest)
+        except Exception as error:
+            print("")
+            print("Local manifest validation failed:")
+            print(error)
+            return False
 
         print("")
         print("Remote version :", remote_manifest["version"])
@@ -1560,12 +1620,7 @@ class OTA:
 
     def _get_local_manifest(self):
 
-        try:
-
-            with open(LOCAL_MANIFEST_FILE, "r") as f:
-                return ujson.load(f)
-
-        except Exception:
+        if not ql_fs.path_exists(LOCAL_MANIFEST_FILE):
 
             print("")
             print("Local manifest not found.")
@@ -1575,6 +1630,19 @@ class OTA:
                 "version": "0.0.0",
                 "files": []
             }
+
+        try:
+
+            with open(LOCAL_MANIFEST_FILE, "r") as f:
+                return ujson.load(f)
+
+        except Exception as error:
+
+            print("")
+            print("Failed to read local manifest:")
+            print(error)
+
+            return None
 
     #--------------------------------------------------------------------------
     # Check whether an update is available
@@ -1705,7 +1773,16 @@ class OTA:
         print("")
         print("Setting APP FOTA update flag")
 
-        self.fota.set_update_flag()
+        try:
+            self.fota.set_update_flag()
+
+        except Exception as error:
+
+            print("")
+            print("Failed to set APP FOTA update flag:")
+            print(error)
+
+            return False
 
         print("")
         print("APP FOTA update flag set.")
@@ -1914,7 +1991,10 @@ class OTA:
 
                 current_path += "/" + directory
 
-                if not self._file_exists(current_path):
+                if force:
+                    new_directories.add(current_path)
+
+                elif not self._file_exists(current_path):
                     new_directories.add(current_path)
 
         required_space += self._get_file_storage(
@@ -2101,7 +2181,11 @@ class OTA:
     def _get_imei(self):
         imei = modem.getDevImei()
 
-        if not isinstance(imei, str) or len(imei) != 15:
+        if (
+            not isinstance(imei, str)
+            or len(imei) != 15
+            or not imei.isdigit()
+        ):
             print("")
             print("Failed to get device IMEI.")
             return None
