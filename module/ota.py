@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://constraint-specs-advertisements-power.trycloudflare.com"
+OTA_SERVER = "https://creek-bush-mario-early.trycloudflare.com"
 
 APP_DIR = "/usr/managed"
 
@@ -1474,30 +1474,49 @@ class OTA:
         print("")
         print("GET:", self.manifest_url)
 
-        response = request.get(self.manifest_url)
+        response = None
 
-        if response.status_code != 200:
+        try:
 
-            response.close()
+            response = request.get(self.manifest_url)
 
-            raise Exception(
-                "HTTP Error: {}".format(response.status_code)
+            if response.status_code != 200:
+
+                raise Exception(
+                    "HTTP Error: {}".format(
+                        response.status_code
+                    )
+                )
+
+            text = ""
+
+            for chunk in response.text:
+                text += chunk
+
+            manifest = ujson.loads(text)
+
+            self.manifest_size = len(
+                text.encode("utf-8")
             )
 
-        text = ""
+            return manifest
 
-        for chunk in response.text:
-            text += chunk
+        except Exception as error:
 
-        response.close()
+            print("")
+            print("Failed to download manifest:")
+            print(error)
 
-        manifest = ujson.loads(text)
+            return None
 
-        self.manifest_size = len(
-            text.encode("utf-8")
-        )
+        finally:
 
-        return manifest
+            if response is not None:
+
+                try:
+                    response.close()
+                except Exception:
+                    pass
 
     #--------------------------------------------------------------------------
     # Validate remote manifest
