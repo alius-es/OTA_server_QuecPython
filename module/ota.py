@@ -38,9 +38,9 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://creek-bush-mario-early.trycloudflare.com"
+OTA_SERVER = "https://medline-cleared-evaluation-recordings.trycloudflare.com"
 
-APP_DIR = "/usr/managed"
+APP_DIR = "/usr"
 
 LOCAL_MANIFEST_FILE = APP_DIR + "/manifest.json"
 
@@ -80,6 +80,9 @@ class OTA:
         "ota.mpy",
         "app.mpy",
         "manifest.json",
+        "ota_state.json",
+        "system_config.json",
+        "main.py",
     )
 
     #--------------------------------------------------------------------------
@@ -174,7 +177,7 @@ class OTA:
 
         update_info = self._check_update()
 
-        if update_info is None:
+        if not update_info:
             return False
 
         if not self._cleanup_previous_update():
