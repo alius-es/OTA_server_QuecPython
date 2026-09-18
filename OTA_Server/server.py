@@ -21,6 +21,7 @@ import socket
 import os
 import mimetypes
 import json
+from datetime import datetime
 from urllib.parse import unquote
 
 
@@ -42,6 +43,34 @@ OTA_REPORT_PATH = "/ota/report"
 
 MAX_REPORT_SIZE = 4096
 
+FILE_CHUNK_SIZE = 4096
+
+CLIENT_TIMEOUT = 10
+
+
+#------------------------------------------------------------------------------
+# Logging
+#------------------------------------------------------------------------------
+
+LOG_SEPARATOR = "-" * 70
+
+
+def get_timestamp():
+
+    return datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+
+def log(message):
+
+    print(
+        "[{}] {}".format(
+            get_timestamp(),
+            message
+        )
+    )
+
 
 #------------------------------------------------------------------------------
 # HTTP response
@@ -55,15 +84,22 @@ def send_response(
 ):
 
     header = (
-        f"HTTP/1.1 {status}\r\n"
-        f"Content-Length: {len(data)}\r\n"
-        f"Content-Type: {content_type}\r\n"
+        "HTTP/1.1 {}\r\n"
+        "Content-Length: {}\r\n"
+        "Content-Type: {}\r\n"
         "Connection: close\r\n"
         "\r\n"
+    ).format(
+        status,
+        len(data),
+        content_type
     )
 
-    client.send(header.encode())
-    client.send(data)
+    client.sendall(
+        header.encode("utf-8")
+    )
+
+    client.sendall(data)
 
 
 #------------------------------------------------------------------------------
@@ -76,13 +112,121 @@ def send_json_response(
     data
 ):
 
-    body = json.dumps(data).encode("utf-8")
+    body = json.dumps(data).encode(
+        "utf-8"
+    )
 
     send_response(
         client,
         status,
         "application/json",
         body
+    )
+
+
+#------------------------------------------------------------------------------
+# File transfer error
+#------------------------------------------------------------------------------
+
+class FileTransferError(Exception):
+
+    def __init__(
+        self,
+        message,
+        bytes_sent
+    ):
+
+        super().__init__(message)
+
+        self.bytes_sent = bytes_sent
+
+
+#------------------------------------------------------------------------------
+# Send file
+#------------------------------------------------------------------------------
+
+def send_file(
+    client,
+    filename,
+    content_type
+):
+
+    file_size = os.path.getsize(
+        filename
+    )
+
+    header = (
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: {}\r\n"
+        "Content-Type: {}\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ).format(
+        file_size,
+        content_type
+    )
+
+    total_sent = 0
+
+    try:
+
+        client.sendall(
+            header.encode("utf-8")
+        )
+
+        with open(
+            filename,
+            "rb"
+        ) as file:
+
+            while True:
+
+                chunk = file.read(
+                    FILE_CHUNK_SIZE
+                )
+
+                if not chunk:
+                    break
+
+                client.sendall(
+                    chunk
+                )
+
+                total_sent += len(chunk)
+
+    except Exception as error:
+
+        raise FileTransferError(
+            str(error),
+            total_sent
+        )
+
+    return (
+        file_size,
+        total_sent
+    )
+
+
+#------------------------------------------------------------------------------
+# Format size
+#------------------------------------------------------------------------------
+
+def format_size(size):
+
+    if size < 1024:
+
+        return "{} B".format(
+            size
+        )
+
+    if size < 1024 * 1024:
+
+        return "{:.2f} KB".format(
+            size / 1024
+        )
+
+    return "{:.2f} MB".format(
+        size / (1024 * 1024)
     )
 
 
@@ -104,21 +248,30 @@ def read_request(client):
         data += chunk
 
         if len(data) > 8192:
+
             raise ValueError(
                 "HTTP request headers are too large"
             )
 
     separator = b"\r\n\r\n"
 
-    header_end = data.find(separator)
+    header_end = data.find(
+        separator
+    )
 
     if header_end < 0:
+
         raise ValueError(
             "Invalid HTTP request"
         )
 
-    header_data = data[:header_end]
-    body = data[header_end + len(separator):]
+    header_data = data[
+        :header_end
+    ]
+
+    body = data[
+        header_end + len(separator):
+    ]
 
     lines = header_data.decode(
         "utf-8",
@@ -126,6 +279,7 @@ def read_request(client):
     ).split("\r\n")
 
     if not lines:
+
         raise ValueError(
             "Missing HTTP request line"
         )
@@ -135,12 +289,15 @@ def read_request(client):
     parts = request_line.split()
 
     if len(parts) != 3:
+
         raise ValueError(
             "Invalid HTTP request line"
         )
 
     method = parts[0]
+
     path = parts[1]
+
     http_version = parts[2]
 
     headers = {}
@@ -155,7 +312,9 @@ def read_request(client):
             1
         )
 
-        headers[name.strip().lower()] = value.strip()
+        headers[
+            name.strip().lower()
+        ] = value.strip()
 
     content_length = headers.get(
         "content-length",
@@ -163,19 +322,25 @@ def read_request(client):
     )
 
     try:
-        content_length = int(content_length)
+
+        content_length = int(
+            content_length
+        )
 
     except ValueError:
+
         raise ValueError(
             "Invalid Content-Length"
         )
 
     if content_length < 0:
+
         raise ValueError(
             "Invalid Content-Length"
         )
 
     if content_length > MAX_REPORT_SIZE:
+
         raise ValueError(
             "Request body is too large"
         )
@@ -190,11 +355,14 @@ def read_request(client):
         body += chunk
 
     if len(body) < content_length:
+
         raise ValueError(
             "Incomplete request body"
         )
 
-    body = body[:content_length]
+    body = body[
+        :content_length
+    ]
 
     return (
         method,
@@ -211,12 +379,17 @@ def read_request(client):
 
 def validate_version(version):
 
-    if not isinstance(version, str):
+    if not isinstance(
+        version,
+        str
+    ):
+
         return False
 
     parts = version.split(".")
 
     if len(parts) != 3:
+
         return False
 
     try:
@@ -234,6 +407,7 @@ def validate_version(version):
         or minor < 0
         or patch < 0
     ):
+
         return False
 
     return True
@@ -245,26 +419,39 @@ def validate_version(version):
 
 def is_safe_relative_path(path):
 
-    if not isinstance(path, str):
+    if not isinstance(
+        path,
+        str
+    ):
+
         return False
 
     if not path:
+
         return False
 
     if path.startswith("/"):
+
         return False
 
     if path.startswith("\\"):
+
         return False
 
     if "\\" in path:
+
         return False
 
     parts = path.split("/")
 
     for part in parts:
 
-        if part in ("", ".", ".."):
+        if part in (
+            "",
+            ".",
+            ".."
+        ):
+
             return False
 
     return True
@@ -276,8 +463,15 @@ def is_safe_relative_path(path):
 
 def validate_ota_report(report):
 
-    if not isinstance(report, dict):
-        return False, "Report must be an object"
+    if not isinstance(
+        report,
+        dict
+    ):
+
+        return (
+            False,
+            "Report must be an object"
+        )
 
     required_fields = {
         "imei",
@@ -289,7 +483,11 @@ def validate_ota_report(report):
     }
 
     if set(report.keys()) != required_fields:
-        return False, "Invalid OTA report fields"
+
+        return (
+            False,
+            "Invalid OTA report fields"
+        )
 
     imei = report["imei"]
 
@@ -298,7 +496,11 @@ def validate_ota_report(report):
         or len(imei) != 15
         or not imei.isdigit()
     ):
-        return False, "Invalid IMEI"
+
+        return (
+            False,
+            "Invalid IMEI"
+        )
 
     operation = report["operation"]
 
@@ -306,32 +508,67 @@ def validate_ota_report(report):
         "update",
         "force_update"
     ):
-        return False, "Invalid operation"
+
+        return (
+            False,
+            "Invalid operation"
+        )
 
     state = report["state"]
 
     if state != "success":
-        return False, "Invalid OTA state"
 
-    target_version = report["target_version"]
+        return (
+            False,
+            "Invalid OTA state"
+        )
 
-    if not validate_version(target_version):
-        return False, "Invalid target version"
+    target_version = report[
+        "target_version"
+    ]
 
-    obsolete_files = report["obsolete_files"]
+    if not validate_version(
+        target_version
+    ):
 
-    if not isinstance(obsolete_files, list):
-        return False, "Invalid obsolete_files"
+        return (
+            False,
+            "Invalid target version"
+        )
+
+    obsolete_files = report[
+        "obsolete_files"
+    ]
+
+    if not isinstance(
+        obsolete_files,
+        list
+    ):
+
+        return (
+            False,
+            "Invalid obsolete_files"
+        )
 
     seen = set()
 
     for filename in obsolete_files:
 
-        if not is_safe_relative_path(filename):
-            return False, "Invalid obsolete file path"
+        if not is_safe_relative_path(
+            filename
+        ):
+
+            return (
+                False,
+                "Invalid obsolete file path"
+            )
 
         if filename in seen:
-            return False, "Duplicate obsolete file"
+
+            return (
+                False,
+                "Duplicate obsolete file"
+            )
 
         seen.add(filename)
 
@@ -339,18 +576,27 @@ def validate_ota_report(report):
         operation == "force_update"
         and obsolete_files
     ):
-        return False, (
+
+        return (
+            False,
             "force_update must not contain obsolete files"
         )
 
-    report_sent = report["report_sent"]
+    report_sent = report[
+        "report_sent"
+    ]
 
     if report_sent is not False:
-        return False, (
+
+        return (
+            False,
             "report_sent must be false"
         )
 
-    return True, None
+    return (
+        True,
+        None
+    )
 
 
 #------------------------------------------------------------------------------
@@ -359,8 +605,13 @@ def validate_ota_report(report):
 
 def save_ota_report(report):
 
-    if not os.path.isdir(REPORTS_DIR):
-        os.makedirs(REPORTS_DIR)
+    if not os.path.isdir(
+        REPORTS_DIR
+    ):
+
+        os.makedirs(
+            REPORTS_DIR
+        )
 
     imei = report["imei"]
 
@@ -369,7 +620,9 @@ def save_ota_report(report):
         imei + ".json"
     )
 
-    temp_filename = filename + ".tmp"
+    temp_filename = (
+        filename + ".tmp"
+    )
 
     data = json.dumps(
         report,
@@ -387,8 +640,13 @@ def save_ota_report(report):
         file.flush()
 
         try:
-            os.fsync(file.fileno())
+
+            os.fsync(
+                file.fileno()
+            )
+
         except Exception:
+
             pass
 
     os.replace(
@@ -411,6 +669,7 @@ def handle_ota_report(
     try:
 
         if not body:
+
             raise ValueError(
                 "Empty request body"
             )
@@ -421,9 +680,10 @@ def handle_ota_report(
 
     except Exception as error:
 
-        print(
-            "Invalid OTA report:",
-            error
+        log(
+            "OTA REPORT REJECTED | {}".format(
+                error
+            )
         )
 
         send_json_response(
@@ -434,7 +694,7 @@ def handle_ota_report(
             }
         )
 
-        return
+        return "400 Bad Request"
 
     valid, error = validate_ota_report(
         report
@@ -442,9 +702,10 @@ def handle_ota_report(
 
     if not valid:
 
-        print(
-            "OTA report rejected:",
-            error
+        log(
+            "OTA REPORT REJECTED | {}".format(
+                error
+            )
         )
 
         send_json_response(
@@ -455,14 +716,35 @@ def handle_ota_report(
             }
         )
 
-        return
+        return "400 Bad Request"
 
-    print("")
-    print("OTA report received.")
-    print("IMEI:", report["imei"])
-    print("Operation:", report["operation"])
-    print("State:", report["state"])
-    print("Target version:", report["target_version"])
+    print()
+
+    log("OTA REPORT")
+
+    print(
+        "  IMEI:      {}".format(
+            report["imei"]
+        )
+    )
+
+    print(
+        "  Operation: {}".format(
+            report["operation"]
+        )
+    )
+
+    print(
+        "  State:     {}".format(
+            report["state"]
+        )
+    )
+
+    print(
+        "  Version:   {}".format(
+            report["target_version"]
+        )
+    )
 
     try:
 
@@ -472,9 +754,11 @@ def handle_ota_report(
 
     except Exception as error:
 
-        print("")
-        print("Failed to save OTA report:")
-        print(error)
+        log(
+            "OTA REPORT ERROR | {}".format(
+                error
+            )
+        )
 
         send_json_response(
             client,
@@ -484,10 +768,13 @@ def handle_ota_report(
             }
         )
 
-        return
+        return "500 Internal Server Error"
 
-    print("OTA report saved:")
-    print(filename)
+    log(
+        "OTA REPORT SAVED | {}".format(
+            filename
+        )
+    )
 
     send_json_response(
         client,
@@ -497,7 +784,11 @@ def handle_ota_report(
         }
     )
 
-    print("OTA report ACK sent.")
+    log(
+        "200 OK | ACK SENT"
+    )
+
+    return "200 OK"
 
 
 #------------------------------------------------------------------------------
@@ -566,7 +857,10 @@ server.setsockopt(
 )
 
 server.bind(
-    (HOST, PORT)
+    (
+        HOST,
+        PORT
+    )
 )
 
 server.listen(5)
@@ -576,12 +870,36 @@ server.listen(5)
 # Server information
 #------------------------------------------------------------------------------
 
-print("=" * 50)
-print("OTA HTTP Server")
-print("Root:", ROOT_DIR)
-print("Reports:", REPORTS_DIR)
-print("Listening:", PORT)
-print("=" * 50)
+print("=" * 70)
+print("QuecPython OTA HTTP Server")
+print("=" * 70)
+print(
+    "Root:      {}".format(
+        ROOT_DIR
+    )
+)
+print(
+    "Reports:   {}".format(
+        REPORTS_DIR
+    )
+)
+print(
+    "Address:   {}:{}".format(
+        HOST,
+        PORT
+    )
+)
+print(
+    "Chunk:     {} bytes".format(
+        FILE_CHUNK_SIZE
+    )
+)
+print(
+    "Timeout:   {} seconds".format(
+        CLIENT_TIMEOUT
+    )
+)
+print("=" * 70)
 
 
 #------------------------------------------------------------------------------
@@ -590,14 +908,33 @@ print("=" * 50)
 
 while True:
 
-    client, addr = server.accept()
+    client = None
 
-    print("")
-    print("Client:", addr)
+    client_ip = "unknown"
+
+    client_port = 0
 
     try:
 
-        client.settimeout(30)
+        client, addr = server.accept()
+
+        client_ip = addr[0]
+
+        client_port = addr[1]
+
+        print()
+        print(LOG_SEPARATOR)
+
+        log(
+            "CONNECT  {}:{}".format(
+                client_ip,
+                client_port
+            )
+        )
+
+        client.settimeout(
+            CLIENT_TIMEOUT
+        )
 
         (
             method,
@@ -607,14 +944,18 @@ while True:
             body
         ) = read_request(client)
 
-        print(
-            method,
-            path,
-            http_version
+        log(
+            "{} {} {}".format(
+                method,
+                path,
+                http_version
+            )
         )
 
+        status = "Unknown"
+
         #----------------------------------------------------------------------
-        # OTA result reporting
+        # OTA report
         #----------------------------------------------------------------------
 
         if (
@@ -623,118 +964,202 @@ while True:
             == OTA_REPORT_PATH
         ):
 
-            handle_ota_report(
+            status = handle_ota_report(
                 client,
                 body
             )
 
-            client.close()
-            continue
-
         #----------------------------------------------------------------------
-        # Only GET is allowed for file downloads.
+        # File download
         #----------------------------------------------------------------------
 
-        if method != "GET":
+        elif method == "GET":
+
+            request_path = path
+
+            if request_path == "/":
+
+                request_path = (
+                    "/manifest.json"
+                )
+
+            filename = get_file_path(
+                request_path
+            )
+
+            if filename is None:
+
+                status = "403 Forbidden"
+
+                send_response(
+                    client,
+                    status,
+                    "text/plain",
+                    b"Forbidden"
+                )
+
+                log(
+                    "403 Forbidden"
+                )
+
+            elif os.path.isfile(
+                filename
+            ):
+
+                content_type = (
+                    mimetypes.guess_type(
+                        filename
+                    )[0]
+                )
+
+                if content_type is None:
+
+                    content_type = (
+                        "application/octet-stream"
+                    )
+
+                file_size = os.path.getsize(
+                    filename
+                )
+
+                try:
+
+                    (
+                        expected_size,
+                        bytes_sent
+                    ) = send_file(
+                        client,
+                        filename,
+                        content_type
+                    )
+
+                    # send_file() returns only after the complete
+                    # file has been passed to sendall().
+                    if bytes_sent == expected_size:
+
+                        status = "200 OK"
+
+                        log(
+                            "200 OK   {}".format(
+                                format_size(
+                                    bytes_sent
+                                )
+                            )
+                        )
+
+                except FileTransferError as error:
+
+                    status = "Client disconnected"
+
+                    log(
+                        "TRANSFER FAILED   {} / {}".format(
+                            format_size(
+                                error.bytes_sent
+                            ),
+                            format_size(
+                                file_size
+                            )
+                        )
+                    )
+
+                    log(
+                        "DETAIL             {}".format(
+                            error
+                        )
+                    )
+
+            else:
+
+                status = "404 Not Found"
+
+                send_response(
+                    client,
+                    status,
+                    "text/plain",
+                    b"File not found"
+                )
+
+                log(
+                    "404 Not Found"
+                )
+
+        #----------------------------------------------------------------------
+        # Unsupported method
+        #----------------------------------------------------------------------
+
+        else:
+
+            status = (
+                "405 Method Not Allowed"
+            )
 
             send_response(
                 client,
-                "405 Method Not Allowed",
+                status,
                 "text/plain",
                 b"Method not allowed"
             )
 
-            client.close()
-            continue
+            log(
+                "405 Method Not Allowed"
+            )
 
-        #----------------------------------------------------------------------
-        # Root path returns manifest.
-        #----------------------------------------------------------------------
+    except socket.timeout:
 
-        if path == "/":
-            path = "/manifest.json"
+        status = "408 Request Timeout"
 
-        filename = get_file_path(
-            path
+        log(
+            "408 Request Timeout"
         )
 
-        if filename is None:
+    except (
+        BrokenPipeError,
+        ConnectionResetError
+    ) as error:
 
-            send_response(
-                client,
-                "403 Forbidden",
-                "text/plain",
-                b"Forbidden"
+        status = "Client disconnected"
+
+        log(
+            "ERROR    client disconnected | {}".format(
+                error
             )
-
-            client.close()
-            continue
-
-        print(
-            "File:",
-            filename
         )
-
-        #----------------------------------------------------------------------
-        # Send requested file.
-        #----------------------------------------------------------------------
-
-        if os.path.isfile(filename):
-
-            with open(
-                filename,
-                "rb"
-            ) as file:
-
-                data = file.read()
-
-            content_type = mimetypes.guess_type(
-                filename
-            )[0]
-
-            if content_type is None:
-                content_type = (
-                    "application/octet-stream"
-                )
-
-            send_response(
-                client,
-                "200 OK",
-                content_type,
-                data
-            )
-
-            print("200 OK")
-
-        else:
-
-            send_response(
-                client,
-                "404 Not Found",
-                "text/plain",
-                b"File not found"
-            )
-
-            print("404")
 
     except Exception as error:
 
-        print("")
-        print("Request error:")
-        print(error)
+        status = "400 Bad Request"
 
-        try:
-
-            send_response(
-                client,
-                "400 Bad Request",
-                "text/plain",
-                b"Bad request"
+        log(
+            "ERROR    {}".format(
+                error
             )
+        )
 
-        except Exception:
-            pass
+        if client is not None:
+
+            try:
+
+                send_response(
+                    client,
+                    status,
+                    "text/plain",
+                    b"Bad request"
+                )
+
+            except Exception:
+
+                pass
 
     finally:
 
-        client.close()
+        if client is not None:
+
+            try:
+
+                client.close()
+
+            except Exception:
+
+                pass
+
+        print(LOG_SEPARATOR)
