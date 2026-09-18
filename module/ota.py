@@ -180,9 +180,6 @@ class OTA:
         if not update_info:
             return False
 
-        if not self._cleanup_previous_update():
-            return False
-
         if not self._check_storage_requirements(
             update_info["remote_manifest"]
         ):
