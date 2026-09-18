@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://medline-cleared-evaluation-recordings.trycloudflare.com"
+OTA_SERVER = "https://loud-recipient-gcc-treasury.trycloudflare.com"
 
 APP_DIR = "/usr"
 
@@ -433,7 +433,26 @@ class OTA:
             print("Starting emergency recovery.")
 
             if not self._cleanup_previous_update():
+
+                print("")
+                print("Failed to clean previous APP FOTA update.")
+                print("Restarting module to retry cleanup.")
+
+                try:
+                    Power.powerRestart()
+
+                except Exception as error:
+
+                    print("")
+                    print("Failed to restart module:")
+                    print(error)
+
+                    return False
+
+                utime.sleep(5)
+
                 return False
+
 
             if not self._remove_ota_state():
                 return False
@@ -476,6 +495,24 @@ class OTA:
             return False
 
         if not self._cleanup_previous_update():
+
+            print("")
+            print("Failed to clean previous APP FOTA update.")
+            print("Restarting module to retry cleanup.")
+
+            try:
+                Power.powerRestart()
+
+            except Exception as error:
+
+                print("")
+                print("Failed to restart module:")
+                print(error)
+
+                return False
+
+            utime.sleep(5)
+
             return False
 
 
