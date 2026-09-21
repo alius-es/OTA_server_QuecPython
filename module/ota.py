@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://mileage-bind-engines-vacation.trycloudflare.com"
+OTA_SERVER = "https://motorcycles-payment-correspondence-medicines.trycloudflare.com"
 
 APP_DIR = "/usr"
 
@@ -51,6 +51,13 @@ OTA_STATE_FILE = "/usr/ota_state.json"
 #------------------------------------------------------------------------------
 
 class OTA:
+
+    #--------------------------------------------------------------------------
+    # Download retry configuration
+    #--------------------------------------------------------------------------
+
+    DOWNLOAD_ATTEMPTS = 3
+    DOWNLOAD_RETRY_DELAY = 2
 
     #--------------------------------------------------------------------------
     # Public result codes
@@ -1425,8 +1432,6 @@ class OTA:
         remote_manifest = self._download_manifest()
 
         if remote_manifest is None:
-            print("")
-            print("Failed to download remote manifest.")
             return False
         
         try:
@@ -1478,49 +1483,84 @@ class OTA:
         print("")
         print("GET:", self.manifest_url)
 
-        response = None
+        for attempt in range(1, self.DOWNLOAD_ATTEMPTS + 1):
 
-        try:
-
-            response = request.get(self.manifest_url)
-
-            if response.status_code != 200:
-
-                raise Exception(
-                    "HTTP Error: {}".format(
-                        response.status_code
-                    )
-                )
-
-            text = ""
-
-            for chunk in response.text:
-                text += chunk
-
-            manifest = ujson.loads(text)
-
-            self.manifest_size = len(
-                text.encode("utf-8")
-            )
-
-            return manifest
-
-        except Exception as error:
+            response = None
 
             print("")
-            print("Failed to download manifest:")
-            print(error)
+            print(
+                "Manifest download attempt {}/{}".format(
+                    attempt,
+                    self.DOWNLOAD_ATTEMPTS
+                )
+            )
 
-            return None
+            try:
 
-        finally:
+                response = request.get(
+                    self.manifest_url
+                )
 
-            if response is not None:
+                if response.status_code != 200:
 
-                try:
-                    response.close()
-                except Exception:
-                    pass
+                    raise Exception(
+                        "HTTP Error: {}".format(
+                            response.status_code
+                        )
+                    )
+
+                text = ""
+
+                for chunk in response.text:
+                    text += chunk
+
+                manifest = ujson.loads(text)
+
+                self.manifest_size = len(
+                    text.encode("utf-8")
+                )
+
+                print("")
+                print("Manifest downloaded successfully.")
+
+                return manifest
+
+            except Exception as error:
+
+                print("")
+                print("Manifest download failed:")
+                print(error)
+
+                if attempt < self.DOWNLOAD_ATTEMPTS:
+
+                    print("")
+                    print(
+                        "Retrying in {} seconds...".format(
+                            self.DOWNLOAD_RETRY_DELAY
+                        )
+                    )
+
+                    utime.sleep(
+                        self.DOWNLOAD_RETRY_DELAY
+                    )
+
+            finally:
+
+                if response is not None:
+
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
+
+        print("")
+        print(
+            "Manifest download failed after {} attempts.".format(
+                self.DOWNLOAD_ATTEMPTS
+            )
+        )
+
+        return None
 
     #--------------------------------------------------------------------------
     # Validate remote manifest
