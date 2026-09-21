@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://loud-recipient-gcc-treasury.trycloudflare.com"
+OTA_SERVER = "https://mileage-bind-engines-vacation.trycloudflare.com"
 
 APP_DIR = "/usr"
 
@@ -99,34 +99,7 @@ class OTA:
 
         self.fota = app_fota.new()
 
-    #--------------------------------------------------------------------------
-    # Check whether another OTA operation is already in progress or waiting
-    # for result reporting.
-    #--------------------------------------------------------------------------
 
-    def _can_start_ota(self):
-
-        if not ql_fs.path_exists(OTA_STATE_FILE):
-            return True
-
-        ota_state = self._read_ota_state()
-
-        print("")
-        print("OTA state already exists.")
-
-        if ota_state is None:
-            print("OTA state is invalid.")
-        else:
-            print("Operation:", ota_state["operation"])
-            print("State    :", ota_state["state"])
-            print("Target   :", ota_state["target_version"])
-            print("Report   :", ota_state["report_sent"])
-
-        print("")
-        print("New OTA operation is blocked.")
-        print("Existing OTA state must be processed first.")
-
-        return False
     #####################################################
     #------------------ Public API ---------------------#
     #####################################################
@@ -171,9 +144,6 @@ class OTA:
     #--------------------------------------------------------------------------
 
     def update(self):
-
-        if not self._can_start_ota():
-            return False
 
         update_info = self._check_update()
 
@@ -313,9 +283,6 @@ class OTA:
 
         print("")
         print("Starting force update.")
-
-        if not self._can_start_ota():
-            return False
 
         remote_manifest = self._download_manifest()
 
