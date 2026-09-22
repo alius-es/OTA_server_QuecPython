@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://motorcycles-payment-correspondence-medicines.trycloudflare.com"
+OTA_SERVER = "https://pastor-smithsonian-deutsche-offers.trycloudflare.com"
 
 APP_DIR = "/usr"
 
@@ -1803,29 +1803,78 @@ class OTA:
             remote_manifest
         )
 
+        if not download_list:
+
+            print("")
+            print("No files need to be downloaded.")
+
+            return True
+        
         print("")
         print("Files to download:", len(download_list))
 
-        try:
-            result = self.fota.bulk_download(download_list)
-        except Exception as error:
-            print("")
-            print("APP FOTA download exception:")
-            print(error)
-            return False
-
-        if result is not None:
+        for attempt in range(1, self.DOWNLOAD_ATTEMPTS + 1):
 
             print("")
-            print("APP FOTA download failed:")
-            print(result)
+            print(
+                "APP FOTA download attempt {}/{}".format(
+                    attempt,
+                    self.DOWNLOAD_ATTEMPTS
+                )
+            )
 
-            return False
+            try:
+
+                # Create a fresh app_fota object for every attempt.
+                #
+                # If bulk_download() failed internally, do not rely on
+                # the state of the previous app_fota object.
+                self.fota = app_fota.new()
+
+                result = self.fota.bulk_download(
+                    download_list
+                )
+
+                if result is not None:
+
+                    print("")
+                    print("APP FOTA download failed:")
+                    print(result)
+
+                else:
+
+                    print("")
+                    print("APP FOTA download completed.")
+
+                    return True
+
+            except Exception as error:
+
+                print("")
+                print("APP FOTA download exception:")
+                print(error)
+
+            if attempt < self.DOWNLOAD_ATTEMPTS:
+
+                print("")
+                print(
+                    "Retrying in {} seconds...".format(
+                        self.DOWNLOAD_RETRY_DELAY
+                    )
+                )
+
+                utime.sleep(
+                    self.DOWNLOAD_RETRY_DELAY
+                )
 
         print("")
-        print("APP FOTA download completed.")
+        print(
+            "APP FOTA download failed after {} attempts.".format(
+                self.DOWNLOAD_ATTEMPTS
+            )
+        )
 
-        return True
+        return False
 
     #--------------------------------------------------------------------------
     # Set Application FOTA update flag
