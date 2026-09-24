@@ -60,16 +60,6 @@ class OTA:
     DOWNLOAD_RETRY_DELAY = 2
 
     #--------------------------------------------------------------------------
-    # Public result codes
-    #--------------------------------------------------------------------------
-
-    class Result:
-
-        SUCCESS = 0
-        FAILED = 1
-        RECOVERY_REQUIRED = 2
-
-    #--------------------------------------------------------------------------
     # Constants
     #--------------------------------------------------------------------------
 
@@ -77,8 +67,15 @@ class OTA:
 
     OTA_STATE_TEMP_FILE = OTA_STATE_FILE + ".tmp"
 
-    OTA_STATE_PENDING = "pending"
-    OTA_STATE_SUCCESS = "success"
+    class OTA_State:
+
+        IDLE = "idle"
+        DELETING = "deleting"
+        DOWNLOADING = "downloading"
+        RECOVERY = "recovery"
+        READY_TO_RESTART = "ready_to_restart"
+        SUCCESS = "success"
+
 
     # Files which must survive a force update.
     # They are protected from deletion, but may still be replaced by
@@ -138,13 +135,10 @@ class OTA:
 
         result = self._process_ota_state()
 
-        if result != self.Result.SUCCESS:
-            return result
+        if result:
+            self._report_ota_result()
 
-        if not self._report_ota_result():
-            return self.Result.FAILED
-
-        return self.Result.SUCCESS
+        return result
     
     #--------------------------------------------------------------------------
     # Perform complete OTA update
@@ -152,134 +146,182 @@ class OTA:
 
     def update(self):
 
+        ota_state = self._read_ota_state()
+
+        if ota_state is None:
+            return False
+        
         update_info = self._check_update()
 
         if not update_info:
             return False
-
-        if not self._check_storage_requirements(
-            update_info["remote_manifest"]
-        ):
-            print("")
-            print("Normal OTA does not fit in /usr.")
-            print("Starting force update.")
-
+        
+        # continuing force_update
+        if ota_state["operation"] == "force_update":
             return self._start_force_update(
+                update_info["remote_manifest"],
+                ota_state
+            )
+        
+        # Starting update ...
+        if ota_state["state"] == self.OTA_State.IDLE:
+
+            if not self._check_storage_requirements(
+                update_info["remote_manifest"]
+            ):
+                print("")
+                print("Normal OTA does not fit in /usr.")
+                print("Starting force update.")
+
+                ota_state["operation"] = "force_update"
+                if not self._write_ota_state(ota_state):
+                    return False
+                
+                return self._start_force_update(
+                    update_info["remote_manifest"],
+                    ota_state
+                )
+
+            ota_state["operation"] = "update"
+            ota_state["target_version"] = update_info["remote_manifest"]["version"]
+            ota_state["state"] = self.OTA_State.DOWNLOADING
+            if not self._write_ota_state(ota_state):
+                return False
+
+        # Downloading ...
+        if ota_state["state"] == self.OTA_State.DOWNLOADING:
+
+            if not self._download_update(
+                update_info["remote_manifest"]
+            ):
+                return False
+
+            obsolete_files = self._get_obsolete_files(
+                update_info["local_manifest"],
                 update_info["remote_manifest"]
             )
 
-        if not self._download_update(
-            update_info["remote_manifest"]
-        ):
+            print("")
+            print("Obsolete files:", len(obsolete_files))
+
+            for filename in obsolete_files:
+                print("  REMOVE AFTER REBOOT:", filename)
+
+            ota_state["obsolete_files"] = obsolete_files
+            ota_state["state"] = self.OTA_State.READY_TO_RESTART
+            if not self._write_ota_state(ota_state):
+                return False
+            
+        # Restarting ...
+        if ota_state["state"] == self.OTA_State.READY_TO_RESTART:
+
+            if not self._set_update_flag():
+                return False
+            
+            print("")
+            print("Restarting module...")
+
+            Power.powerRestart()
+
+            utime.sleep(5)
+            return True
+
+        else:
             return False
 
-        obsolete_files = self._get_obsolete_files(
-            update_info["local_manifest"],
-            update_info["remote_manifest"]
-        )
+    def _start_force_update(self, remote_manifest, ota_state):
 
-        print("")
-        print("Obsolete files:", len(obsolete_files))
-
-        for filename in obsolete_files:
-            print("  REMOVE AFTER REBOOT:", filename)
-
-        if not self._create_ota_state(
-            "update",
-            update_info["remote_manifest"]["version"],
-            obsolete_files
-        ):
+        if ota_state["operation"] != "force_update":
             return False
 
-        if not self._set_update_flag():
-            return False
+        if ota_state["state"] == self.OTA_State.IDLE:
 
-        print("")
-        print("Restarting module...")
+            #----------------------------------------------------------------------
+            # PRE-FLIGHT STORAGE CHECK
+            #----------------------------------------------------------------------
+            
+            required_space = self._get_required_space(
+                remote_manifest,
+                force=True
+            )
 
-        Power.powerRestart()
+            free_space = self._get_free_space()
+            reclaimable_space = self._get_reclaimable_space()
 
-        utime.sleep(5)
-        return True
-
-    def _start_force_update(self, remote_manifest):
-
-        #----------------------------------------------------------------------
-        # PRE-FLIGHT STORAGE CHECK
-        #----------------------------------------------------------------------
-
-        required_space = self._get_required_space(
-            remote_manifest,
-            force=True
-        )
-
-        free_space = self._get_free_space()
-        reclaimable_space = self._get_reclaimable_space()
-
-        expected_free_space = (
-            free_space + reclaimable_space
-        )
-
-        print("")
-        print("Force update storage pre-flight:")
-        print("  Required space :", required_space)
-        print("  Free space     :", free_space)
-        print("  Reclaimable    :", reclaimable_space)
-        print("  Expected free  :", expected_free_space)
-
-        if expected_free_space < required_space:
+            expected_free_space = (
+                free_space + reclaimable_space
+            )
 
             print("")
-            print("Not enough storage for force update.")
-            return False
-        
-        # Create persistent OTA state BEFORE destructive application
-        # cleanup. This protects the operation against power loss.
-        if not self._create_ota_state(
-            "force_update",
-            remote_manifest["version"],
-            []
-        ):
-            print("")
-            print("Force update aborted: could not create OTA state.")
-            return False
+            print("Force update storage pre-flight:")
+            print("  Required space :", required_space)
+            print("  Free space     :", free_space)
+            print("  Reclaimable    :", reclaimable_space)
+            print("  Expected free  :", expected_free_space)
+
+            if expected_free_space < required_space:
+
+                print("")
+                print("Not enough storage for force update.")
+                return False
+
+            ota_state["state"] = self.OTA_State.DELETING
+            ota_state["target_version"] = remote_manifest["version"]
+            if not self._write_ota_state(ota_state):
+                return False
 
         # Remove all non-protected application files.
-        if not self._remove_unprotected_files():
+        if ota_state["state"] == self.OTA_State.DELETING:
+
+            if not self._remove_unprotected_files():
+                print("")
+                print("Failed to clean application files.")
+
+                return False
+
+            #----------------------------------------------------------------------
+            # FINAL STORAGE CHECK
+            #
+            # This uses the actual filesystem state after cleanup.
+            #----------------------------------------------------------------------
+            if not self._check_storage_requirements(remote_manifest):
+                print("")
+                print("Not enough storage for force update.")
+                return False
+
+            ota_state["state"] = self.OTA_State.DOWNLOADING
+            if not self._write_ota_state(ota_state):
+                return False
+
+        if ota_state["state"] == self.OTA_State.DOWNLOADING:
+
+            if not self._download_update(remote_manifest):
+                print("")
+                print("Force update failed.")
+                return False
+
+            ota_state["state"] = self.OTA_State.READY_TO_RESTART
+            if not self._write_ota_state(ota_state):
+                return False
+
+        if ota_state["state"] == self.OTA_State.READY_TO_RESTART:
+                
+            if not self._set_update_flag():
+                print("")
+                print("Failed to set APP FOTA update flag.")
+                return False
+
             print("")
-            print("Failed to clean application files.")
-            print("Starting OTA recovery.")
+            print("Force update prepared successfully.")
+            print("Restarting device.")
 
+            Power.powerRestart()
+
+            utime.sleep(5)
+            return True
+
+        else:
             return False
-
-        #----------------------------------------------------------------------
-        # FINAL STORAGE CHECK
-        #
-        # This uses the actual filesystem state after cleanup.
-        #----------------------------------------------------------------------
-        if not self._check_storage_requirements(remote_manifest):
-            print("")
-            print("Not enough storage for force update.")
-            return False
-
-        if not self._download_update(remote_manifest):
-            print("")
-            print("Force update failed.")
-            return False
-
-        if not self._set_update_flag():
-            print("")
-            print("Failed to set APP FOTA update flag.")
-            return False
-
-        print("")
-        print("Force update prepared successfully.")
-        print("Restarting device.")
-
-        Power.powerRestart()
-
-        utime.sleep(5)
-        return True
 
         
     #--------------------------------------------------------------------------
@@ -445,7 +487,7 @@ class OTA:
         # It must first be processed and reported using process_ota().
         #----------------------------------------------------------------------
 
-        if ota_state["state"] == self.OTA_STATE_SUCCESS:
+        if ota_state["state"] == self.OTA_State.SUCCESS:
 
             print("")
             print("OTA operation was already completed successfully.")
@@ -458,7 +500,7 @@ class OTA:
         # Only a pending operation can be recovered.
         #----------------------------------------------------------------------
 
-        if ota_state["state"] != self.OTA_STATE_PENDING:
+        if ota_state["state"] == self.OTA_State.IDLE:
 
             print("")
             print("OTA state cannot be recovered.")
@@ -666,7 +708,7 @@ class OTA:
     def _process_ota_state(self):
 
         if not ql_fs.path_exists(OTA_STATE_FILE):
-            return self.Result.SUCCESS
+            return self._create_ota_state()
 
         print("")
         print("========================================")
@@ -678,7 +720,10 @@ class OTA:
         if ota_state is None:
             print("")
             print("OTA state is invalid.")
-            return self.Result.RECOVERY_REQUIRED
+
+            self._create_ota_state(self.OTA_State.RECOVERY)
+            
+            return False
 
         operation = ota_state["operation"]
         state = ota_state["state"]
@@ -693,12 +738,14 @@ class OTA:
         #------------------------------------------------------------------
         # Installation was already verified. Only result reporting remains.
         #------------------------------------------------------------------
-
-        if state == self.OTA_STATE_SUCCESS:
+        if state == self.OTA_State.IDLE:
+            return True
+        
+        if state == self.OTA_State.SUCCESS:
             print("")
             print("OTA update already completed.")
             print("Waiting for OTA result reporting.")
-            return self.Result.SUCCESS
+            return True
 
         #------------------------------------------------------------------
         # Verify the actual installed application against its manifest.
@@ -715,7 +762,11 @@ class OTA:
             print(error)
             print("")
             print("OTA recovery is required.")
-            return self.Result.RECOVERY_REQUIRED
+
+            ota_state["state"] = self.OTA_State.RECOVERY
+            self._write_ota_state(ota_state)
+
+            return False
 
         local_version = local_manifest["version"]
 
@@ -727,14 +778,22 @@ class OTA:
             print("Target version is not installed.")
             print("")
             print("OTA recovery is required.")
-            return self.Result.RECOVERY_REQUIRED
+
+            ota_state["state"] = self.OTA_State.RECOVERY
+            self._write_ota_state(ota_state)
+
+            return False
 
         if not self._verify_ota_installation(local_manifest):
             print("")
             print("OTA installation verification failed.")
             print("")
             print("OTA recovery is required.")
-            return self.Result.RECOVERY_REQUIRED
+
+            ota_state["state"] = self.OTA_State.RECOVERY
+            self._write_ota_state(ota_state)
+
+            return False
 
         #------------------------------------------------------------------
         # Normal update removes only files known to be obsolete.
@@ -751,13 +810,13 @@ class OTA:
                 print("")
                 print("Obsolete file cleanup is incomplete.")
                 print("Keeping ota_state.json.")
-                return self.Result.FAILED
+                return False
 
         elif operation != "force_update":
             print("")
             print("Unknown OTA operation.")
             print("Keeping ota_state.json.")
-            return self.Result.FAILED
+            return False
 
         #------------------------------------------------------------------
         # Installation is confirmed. Keep state until reporting succeeds.
@@ -767,339 +826,14 @@ class OTA:
             print("")
             print("Failed to save successful OTA state.")
             print("Keeping ota_state.json.")
-            return self.Result.FAILED
+            return False
 
         print("")
         print("OTA update completed successfully.")
         print("OTA state changed to success.")
         print("OTA result is ready for server reporting.")
 
-        return self.Result.SUCCESS
-
-    #--------------------------------------------------------------------------
-    # Read ota_state.json
-    #--------------------------------------------------------------------------
-
-    def _read_ota_state(self):
-
-        if not ql_fs.path_exists(OTA_STATE_FILE):
-            return None
-
-        try:
-
-            with open(OTA_STATE_FILE, "r") as f:
-                ota_state = ujson.load(f)
-
-        except Exception as error:
-
-            print("")
-            print("Failed to read ota_state.json:")
-            print(error)
-
-            return None
-
-        if not self._validate_ota_state(ota_state):
-            print("")
-            print("Invalid ota_state.json.")
-            return None
-
-        return ota_state
-
-    #--------------------------------------------------------------------------
-    # Validate ota_state.json
-    #--------------------------------------------------------------------------
-
-    def _validate_ota_state(self, ota_state):
-
-        if not isinstance(ota_state, dict):
-            return False
-
-        imei = ota_state.get("imei")
-
-        if (
-            not isinstance(imei, str)
-            or len(imei) != 15
-            or not imei.isdigit()
-        ):
-            return False
-
-        operation = ota_state.get("operation")
-
-        if operation not in (
-            "update",
-            "force_update"
-        ):
-            return False
-
-        state = ota_state.get("state")
-
-        if state not in (
-            self.OTA_STATE_PENDING,
-            self.OTA_STATE_SUCCESS
-        ):
-            return False
-
-        target_version = ota_state.get("target_version")
-
-        if (
-            not isinstance(target_version, str)
-            or not target_version
-        ):
-            return False
-
-        try:
-            self._parse_version(target_version)
-        except Exception:
-            return False
-
-        obsolete_files = ota_state.get("obsolete_files")
-
-        if not isinstance(obsolete_files, list):
-            return False
-
-        seen = set()
-
-        for filename in obsolete_files:
-
-            if not self._is_safe_relative_path(filename):
-                return False
-
-            if filename in seen:
-                return False
-
-            seen.add(filename)
-
-        report_sent = ota_state.get("report_sent")
-
-        if not isinstance(report_sent, bool):
-            return False
-
-        if (
-            state == self.OTA_STATE_PENDING
-            and report_sent
-        ):
-            return False
-
-        # force_update must never have obsolete files.
-        if operation == "force_update" and obsolete_files:
-            return False
-
         return True
-
-    #--------------------------------------------------------------------------
-    # Create ota_state.json
-    #
-    # ota_state.json is written BEFORE the app_fota update flag is set.
-    # Therefore a power loss before the flag is set cannot cause deletion
-    # of obsolete files during the next startup.
-    #--------------------------------------------------------------------------
-
-    def _create_ota_state(
-        self,
-        operation,
-        target_version,
-        obsolete_files
-    ):
-
-        imei = self._get_imei()
-
-        if imei is None:
-            return False
-
-        ota_state = {
-            "imei": imei,
-            "operation": operation,
-            "state": self.OTA_STATE_PENDING,
-            "target_version": target_version,
-            "obsolete_files": obsolete_files,
-            "report_sent": False
-        }
-
-        print("")
-        print("Creating OTA state.")
-        print("IMEI:", imei)
-        print("Operation:", operation)
-        print("Target version:", target_version)
-        print("Obsolete files:", len(obsolete_files))
-
-        try:
-
-            if ql_fs.path_exists(self.OTA_STATE_TEMP_FILE):
-                uos.remove(self.OTA_STATE_TEMP_FILE)
-
-            with open(self.OTA_STATE_TEMP_FILE, "w") as f:
-                ujson.dump(ota_state, f)
-                f.flush()
-
-            try:
-                uos.sync()
-            except Exception:
-                pass
-
-            if ql_fs.path_exists(OTA_STATE_FILE):
-                uos.remove(OTA_STATE_FILE)
-
-            uos.rename(
-                self.OTA_STATE_TEMP_FILE,
-                OTA_STATE_FILE
-            )
-
-            if not ql_fs.path_exists(OTA_STATE_FILE):
-                raise Exception(
-                    "ota_state.json was not created"
-                )
-
-            print("")
-            print("ota_state.json created successfully.")
-
-            return True
-
-        except Exception as error:
-
-            print("")
-            print("Failed to create ota_state.json:")
-            print(error)
-
-            try:
-                if ql_fs.path_exists(self.OTA_STATE_TEMP_FILE):
-                    uos.remove(self.OTA_STATE_TEMP_FILE)
-            except Exception:
-                pass
-
-            return False
-
-    #  save all state in success state
-    def _mark_ota_success(self, ota_state):
-
-        ota_state["state"] = self.OTA_STATE_SUCCESS
-        ota_state["report_sent"] = False
-
-        try:
-
-            if ql_fs.path_exists(self.OTA_STATE_TEMP_FILE):
-                uos.remove(self.OTA_STATE_TEMP_FILE)
-
-            with open(self.OTA_STATE_TEMP_FILE, "w") as f:
-                ujson.dump(ota_state, f)
-                f.flush()
-
-            try:
-                uos.sync()
-            except Exception:
-                pass
-
-            if ql_fs.path_exists(OTA_STATE_FILE):
-                uos.remove(OTA_STATE_FILE)
-
-            uos.rename(
-                self.OTA_STATE_TEMP_FILE,
-                OTA_STATE_FILE
-            )
-
-            if not ql_fs.path_exists(OTA_STATE_FILE):
-                raise Exception(
-                    "ota_state.json was not saved"
-                )
-
-            return True
-
-        except Exception as error:
-
-            print("")
-            print("Failed to mark OTA as successful:")
-            print(error)
-
-            try:
-                if ql_fs.path_exists(self.OTA_STATE_TEMP_FILE):
-                    uos.remove(self.OTA_STATE_TEMP_FILE)
-            except Exception:
-                pass
-
-            return False
-
-    #--------------------------------------------------------------------------
-    # Mark OTA result as reported to the server.
-    #
-    # The state file is kept until this information is safely persisted.
-    #--------------------------------------------------------------------------
-
-    def _mark_ota_reported(self, ota_state):
-
-        ota_state["report_sent"] = True
-
-        try:
-
-            if ql_fs.path_exists(
-                self.OTA_STATE_TEMP_FILE
-            ):
-                uos.remove(
-                    self.OTA_STATE_TEMP_FILE
-                )
-
-            with open(
-                self.OTA_STATE_TEMP_FILE,
-                "w"
-            ) as f:
-
-                ujson.dump(
-                    ota_state,
-                    f
-                )
-
-                f.flush()
-
-            try:
-                uos.sync()
-            except Exception:
-                pass
-
-            if ql_fs.path_exists(
-                OTA_STATE_FILE
-            ):
-                uos.remove(
-                    OTA_STATE_FILE
-                )
-
-            uos.rename(
-                self.OTA_STATE_TEMP_FILE,
-                OTA_STATE_FILE
-            )
-
-            if not ql_fs.path_exists(
-                OTA_STATE_FILE
-            ):
-                raise Exception(
-                    "ota_state.json was not saved"
-                )
-
-            print("")
-            print(
-                "OTA report state saved."
-            )
-
-            return True
-
-        except Exception as error:
-
-            print("")
-            print(
-                "Failed to save OTA report state:"
-            )
-            print(error)
-
-            try:
-
-                if ql_fs.path_exists(
-                    self.OTA_STATE_TEMP_FILE
-                ):
-                    uos.remove(
-                        self.OTA_STATE_TEMP_FILE
-                    )
-
-            except Exception:
-                pass
-
-            return False
 
     #--------------------------------------------------------------------------
     # Send successful OTA result to the server.
@@ -1115,10 +849,8 @@ class OTA:
 
     def _report_ota_result(self):
 
-        if not ql_fs.path_exists(
-            OTA_STATE_FILE
-        ):
-            return True
+        if not ql_fs.path_exists(OTA_STATE_FILE):
+            return self._create_ota_state()
 
         ota_state = self._read_ota_state()
 
@@ -1129,7 +861,10 @@ class OTA:
 
             return False
 
-        if ota_state["state"] != self.OTA_STATE_SUCCESS:
+        if ota_state["state"] == self.OTA_State.IDLE:
+            return True
+        
+        if ota_state["state"] != self.OTA_State.SUCCESS:
 
             print("")
             print("OTA result is not ready for reporting.")
@@ -1246,10 +981,6 @@ class OTA:
 
             return False
 
-        #----------------------------------------------------------------------
-        # Now it is safe to remove ota_state.json.
-        #----------------------------------------------------------------------
-
         if not self._remove_ota_state():
 
             print("")
@@ -1261,6 +992,226 @@ class OTA:
         print("OTA result reporting completed.")
 
         return True
+
+    #--------------------------------------------------------------------------
+    # Mark OTA result as reported to the server.
+    #
+    # The state file is kept until this information is safely persisted.
+    #--------------------------------------------------------------------------
+
+    def _mark_ota_reported(self, ota_state):
+
+        ota_state["report_sent"] = True
+
+        if not self._write_ota_state(ota_state):
+            return False
+        
+    #--------------------------------------------------------------------------
+    # Read ota_state.json
+    #--------------------------------------------------------------------------
+
+    def _read_ota_state(self):
+
+        if not ql_fs.path_exists(OTA_STATE_FILE):
+            return None
+
+        try:
+
+            with open(OTA_STATE_FILE, "r") as f:
+                ota_state = ujson.load(f)
+
+        except Exception as error:
+
+            print("")
+            print("Failed to read ota_state.json:")
+            print(error)
+
+            return None
+
+        if not self._validate_ota_state(ota_state):
+            print("")
+            print("Invalid ota_state.json.")
+            return None
+
+        return ota_state
+
+    #--------------------------------------------------------------------------
+    # Validate ota_state.json
+    #--------------------------------------------------------------------------
+
+    def _validate_ota_state(self, ota_state):
+
+        if not isinstance(ota_state, dict):
+            return False
+
+        imei = ota_state.get("imei")
+
+        if (
+            not isinstance(imei, str)
+            or len(imei) != 15
+            or not imei.isdigit()
+        ):
+            return False
+
+        operation = ota_state.get("operation")
+
+        if operation not in (
+            "update",
+            "force_update"
+        ):
+            return False
+
+        state = ota_state.get("state")
+
+        if state not in (
+            self.OTA_STATE_PENDING,
+            self.OTA_STATE_SUCCESS
+        ):
+            return False
+
+        target_version = ota_state.get("target_version")
+
+        if (
+            not isinstance(target_version, str)
+            or not target_version
+        ):
+            return False
+
+        try:
+            self._parse_version(target_version)
+        except Exception:
+            return False
+
+        obsolete_files = ota_state.get("obsolete_files")
+
+        if not isinstance(obsolete_files, list):
+            return False
+
+        seen = set()
+
+        for filename in obsolete_files:
+
+            if not self._is_safe_relative_path(filename):
+                return False
+
+            if filename in seen:
+                return False
+
+            seen.add(filename)
+
+        report_sent = ota_state.get("report_sent")
+
+        if not isinstance(report_sent, bool):
+            return False
+
+        if (
+            state == self.OTA_STATE_PENDING
+            and report_sent
+        ):
+            return False
+
+        # force_update must never have obsolete files.
+        if operation == "force_update" and obsolete_files:
+            return False
+
+        return True
+
+    def _write_ota_state(self, ota_state):
+
+        try:
+
+            if ql_fs.path_exists(self.OTA_STATE_TEMP_FILE):
+                uos.remove(self.OTA_STATE_TEMP_FILE)
+
+            with open(self.OTA_STATE_TEMP_FILE, "w") as f:
+                ujson.dump(ota_state, f)
+                f.flush()
+
+            try:
+                uos.sync()
+            except Exception:
+                pass
+
+            if ql_fs.path_exists(OTA_STATE_FILE):
+                uos.remove(OTA_STATE_FILE)
+
+            uos.rename(
+                self.OTA_STATE_TEMP_FILE,
+                OTA_STATE_FILE
+            )
+
+            if not ql_fs.path_exists(OTA_STATE_FILE):
+                raise Exception(
+                    "ota_state.json was not saved"
+                )
+
+            return True
+
+        except Exception as error:
+
+            print("")
+            print("Failed to write ota_state.json:")
+            print(error)
+
+            try:
+                if ql_fs.path_exists(
+                    self.OTA_STATE_TEMP_FILE
+                ):
+                    uos.remove(
+                        self.OTA_STATE_TEMP_FILE
+                    )
+            except Exception:
+                pass
+
+            return False
+
+    #--------------------------------------------------------------------------
+    # Create ota_state.json
+    #
+    # ota_state.json is written BEFORE the app_fota update flag is set.
+    # Therefore a power loss before the flag is set cannot cause deletion
+    # of obsolete files during the next startup.
+    #--------------------------------------------------------------------------
+
+    def _create_ota_state(self, state=OTA_State.IDLE):
+
+        imei = self._get_imei()
+
+        if imei is None:
+            return False
+
+        ota_state = {
+            "imei": imei,
+            "operation": None,
+            "state": state,
+            "target_version": None,
+            "obsolete_files": [],
+            "report_sent": False
+        }
+
+        print("")
+        print("Creating OTA state.")
+        print("IMEI:", imei)
+        print("Operation:", None)
+        print("State:", state)
+        print("Target version:", None)
+        print("Obsolete files:", [])
+        print("Report sent:", False)
+
+        if not self._write_ota_state(ota_state):
+            return False
+
+        return True
+
+    #  save all state in success state
+    def _mark_ota_success(self, ota_state):
+
+        ota_state["state"] = self.OTA_STATE_SUCCESS
+        ota_state["report_sent"] = False
+
+        if not self._write_ota_state(ota_state):
+            return False
+
     #--------------------------------------------------------------------------
     # Remove ota_state.json
     #--------------------------------------------------------------------------
