@@ -154,8 +154,12 @@ class OTA:
     # Perform complete OTA update
     #--------------------------------------------------------------------------
 
-    def update(self):
+    def update(self, permission=False):
 
+        if not permission:
+            print("Updating is not allowed")
+            return False
+        
         ota_state = self._read_ota_state()
 
         if ota_state is None:
