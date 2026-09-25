@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://pastor-smithsonian-deutsche-offers.trycloudflare.com"
+OTA_SERVER = "https://fisher-screenshots-clubs-learners.trycloudflare.com"
 
 APP_DIR = "/usr"
 
@@ -133,10 +133,20 @@ class OTA:
 
     def process_ota(self):
 
-        result = self._process_ota_state()
+        ota_state = self._read_ota_state()
+
+        result = self._process_ota_state(ota_state)
+
+        ota_state = self._read_ota_state()
+
+        if ota_state is None:
+            return False
+    
+        if ota_state["state"] == self.OTA_State.RECOVERY:
+            return self._recover_ota(ota_state)
 
         if result:
-            self._report_ota_result()
+            self._report_ota_result(ota_state)
 
         return result
     
@@ -164,7 +174,10 @@ class OTA:
             )
         
         # Starting update ...
-        if ota_state["state"] == self.OTA_State.IDLE:
+        if (
+            ota_state["state"] == self.OTA_State.IDLE 
+            or ota_state["state"] == self.OTA_State.SUCCESS
+        ):
 
             if not self._check_storage_requirements(
                 update_info["remote_manifest"]
@@ -234,7 +247,10 @@ class OTA:
         if ota_state["operation"] != "force_update":
             return False
 
-        if ota_state["state"] == self.OTA_State.IDLE:
+        if (
+            ota_state["state"] == self.OTA_State.IDLE 
+            or ota_state["state"] == self.OTA_State.SUCCESS
+        ):
 
             #----------------------------------------------------------------------
             # PRE-FLIGHT STORAGE CHECK
@@ -416,7 +432,7 @@ class OTA:
     #
     #--------------------------------------------------------------------------
 
-    def recover_ota(self):
+    def _recover_ota(self, ota_state):
 
         print("")
         print("Starting OTA recovery.")
@@ -431,13 +447,11 @@ class OTA:
             print("No OTA state found.")
             print("Nothing to recover.")
 
-            return True
+            return self._create_ota_state()
 
         #----------------------------------------------------------------------
         # Read and validate the existing OTA state.
         #----------------------------------------------------------------------
-
-        ota_state = self._read_ota_state()
 
         if ota_state is None:
 
@@ -466,13 +480,11 @@ class OTA:
 
                 return False
 
-
-            if not self._remove_ota_state():
-                return False
-
             print("")
             print("Emergency OTA recovery completed.")
             print("A new OTA operation may now be started.")
+
+            self._create_ota_state()
 
             return True
 
@@ -494,18 +506,14 @@ class OTA:
             print("Recovery is not allowed.")
             print("Use process_ota() to finish result reporting.")
 
-            return False
-
-        #----------------------------------------------------------------------
-        # Only a pending operation can be recovered.
-        #----------------------------------------------------------------------
+            return True
 
         if ota_state["state"] == self.OTA_State.IDLE:
 
             print("")
             print("OTA state cannot be recovered.")
 
-            return False
+            return True
 
         if not self._cleanup_previous_update():
 
@@ -528,13 +536,11 @@ class OTA:
 
             return False
 
-
-        if not self._remove_ota_state():
-            return False
-
         print("")
         print("OTA recovery completed successfully.")
         print("A new OTA operation may now be started.")
+
+        self._create_ota_state()
 
         return True
 
@@ -705,7 +711,7 @@ class OTA:
     # Process OTA state after reboot.
     #--------------------------------------------------------------------------
 
-    def _process_ota_state(self):
+    def _process_ota_state(self, ota_state):
 
         if not ql_fs.path_exists(OTA_STATE_FILE):
             return self._create_ota_state()
@@ -715,14 +721,12 @@ class OTA:
         print("Checking OTA state")
         print("========================================")
 
-        ota_state = self._read_ota_state()
-
         if ota_state is None:
             print("")
             print("OTA state is invalid.")
 
             self._create_ota_state(self.OTA_State.RECOVERY)
-            
+
             return False
 
         operation = ota_state["operation"]
@@ -847,12 +851,10 @@ class OTA:
     # If any step fails, ota_state.json is kept.
     #--------------------------------------------------------------------------
 
-    def _report_ota_result(self):
+    def _report_ota_result(self, ota_state):
 
         if not ql_fs.path_exists(OTA_STATE_FILE):
             return self._create_ota_state()
-
-        ota_state = self._read_ota_state()
 
         if ota_state is None:
 
@@ -883,7 +885,7 @@ class OTA:
 
             print("Removing ota_state.json.")
 
-            return self._remove_ota_state()
+            return True
 
         print("")
         print("========================================")
@@ -981,12 +983,7 @@ class OTA:
 
             return False
 
-        if not self._remove_ota_state():
-
-            print("")
-            print("Failed to remove ota_state.json.")
-
-            return False
+        self._create_ota_state()
 
         print("")
         print("OTA result reporting completed.")
@@ -1044,6 +1041,9 @@ class OTA:
         if not isinstance(ota_state, dict):
             return False
 
+        if ota_state["state"] == self.OTA_State.RECOVERY:
+            return True
+        
         imei = ota_state.get("imei")
 
         if (
@@ -1057,30 +1057,36 @@ class OTA:
 
         if operation not in (
             "update",
-            "force_update"
+            "force_update",
+            None
         ):
             return False
 
         state = ota_state.get("state")
 
         if state not in (
-            self.OTA_STATE_PENDING,
-            self.OTA_STATE_SUCCESS
+            self.OTA_State.IDLE,
+            self.OTA_State.DELETING,
+            self.OTA_State.DOWNLOADING,
+            self.OTA_State.RECOVERY,
+            self.OTA_State.READY_TO_RESTART,
+            self.OTA_State.SUCCESS
         ):
             return False
 
         target_version = ota_state.get("target_version")
 
-        if (
-            not isinstance(target_version, str)
-            or not target_version
-        ):
-            return False
+        if state != self.OTA_State.IDLE:
+            if (
+                not isinstance(target_version, str)
+                or not target_version
+            ):
+                return False
 
-        try:
-            self._parse_version(target_version)
-        except Exception:
-            return False
+            try:
+                self._parse_version(target_version)
+            except Exception:
+                return False
 
         obsolete_files = ota_state.get("obsolete_files")
 
@@ -1102,12 +1108,6 @@ class OTA:
         report_sent = ota_state.get("report_sent")
 
         if not isinstance(report_sent, bool):
-            return False
-
-        if (
-            state == self.OTA_STATE_PENDING
-            and report_sent
-        ):
             return False
 
         # force_update must never have obsolete files.
@@ -1206,7 +1206,7 @@ class OTA:
     #  save all state in success state
     def _mark_ota_success(self, ota_state):
 
-        ota_state["state"] = self.OTA_STATE_SUCCESS
+        ota_state["state"] = self.OTA_State.SUCCESS
         ota_state["report_sent"] = False
 
         if not self._write_ota_state(ota_state):
