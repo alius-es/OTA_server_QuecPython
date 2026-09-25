@@ -806,24 +806,40 @@ class OTA:
             print("")
             print("Target version is not installed.")
             print("")
-            print("OTA recovery is required.")
 
+            if ( operation == "update" 
+                or operation == "force_update" 
+            ):
+                print("Repeat last operation.")
+
+                if self.update(True):
+                    return True
+                
+            print("OTA recovery is required.")
+            print("")
             ota_state["state"] = self.OTA_State.RECOVERY
             self._write_ota_state(ota_state)
-
+        
             return False
 
         if not self._verify_ota_installation(local_manifest):
             print("")
             print("OTA installation verification failed.")
             print("")
-            print("OTA recovery is required.")
 
+            if ( operation == "force_update" ):
+
+                print("Repeat last operation.")
+
+                if self.force_update(True):
+                    return True
+
+            print("OTA recovery is required.")
+            print("")
             ota_state["state"] = self.OTA_State.RECOVERY
             self._write_ota_state(ota_state)
-
+        
             return False
-
         #------------------------------------------------------------------
         # Normal update removes only files known to be obsolete.
         #------------------------------------------------------------------
@@ -838,7 +854,6 @@ class OTA:
             ):
                 print("")
                 print("Obsolete file cleanup is incomplete.")
-                print("Keeping ota_state.json.")
                 return False
 
         elif operation != "force_update":
