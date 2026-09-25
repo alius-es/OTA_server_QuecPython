@@ -164,11 +164,13 @@ class OTA:
 
         if ota_state is None:
             return False
-        
-        update_info = self._check_update()
 
-        if not update_info:
-            return False
+        if not ota_state["state"] == self.OTA_State.READY_TO_RESTART:
+
+            update_info = self._check_update()
+
+            if not update_info:
+                return False
         
         # continuing force_update
         if ota_state["operation"] == "force_update":
@@ -176,8 +178,11 @@ class OTA:
                 update_info["remote_manifest"],
                 ota_state
             )
-        
-        # Starting update ...
+
+        #--------------------------------------------------
+        # Prepare update only in states IDLE and SUCCESS
+        #--------------------------------------------------
+                
         if (
             ota_state["state"] == self.OTA_State.IDLE 
             or ota_state["state"] == self.OTA_State.SUCCESS
@@ -200,12 +205,16 @@ class OTA:
                 )
 
             ota_state["operation"] = "update"
-            ota_state["target_version"] = update_info["remote_manifest"]["version"]
             ota_state["state"] = self.OTA_State.DOWNLOADING
+            ota_state["target_version"] = update_info["remote_manifest"]["version"]
+            ota_state["report_sent"] = False
             if not self._write_ota_state(ota_state):
                 return False
 
+        #--------------------------------------------------
         # Downloading ...
+        #--------------------------------------------------
+
         if ota_state["state"] == self.OTA_State.DOWNLOADING:
 
             if not self._download_update(
@@ -228,8 +237,11 @@ class OTA:
             ota_state["state"] = self.OTA_State.READY_TO_RESTART
             if not self._write_ota_state(ota_state):
                 return False
-            
+
+        #--------------------------------------------------
         # Restarting ...
+        #--------------------------------------------------
+
         if ota_state["state"] == self.OTA_State.READY_TO_RESTART:
 
             if not self._set_update_flag():
@@ -287,10 +299,13 @@ class OTA:
 
             ota_state["state"] = self.OTA_State.DELETING
             ota_state["target_version"] = remote_manifest["version"]
+            ota_state["report_sent"] = False
             if not self._write_ota_state(ota_state):
                 return False
 
+        #-----------------------------------------------
         # Remove all non-protected application files.
+        #-----------------------------------------------
         if ota_state["state"] == self.OTA_State.DELETING:
 
             if not self._remove_unprotected_files():
@@ -312,7 +327,10 @@ class OTA:
             ota_state["state"] = self.OTA_State.DOWNLOADING
             if not self._write_ota_state(ota_state):
                 return False
-
+            
+        #-----------------------------------------------
+        # Downloading 
+        #-----------------------------------------------
         if ota_state["state"] == self.OTA_State.DOWNLOADING:
 
             if not self._download_update(remote_manifest):
@@ -323,7 +341,10 @@ class OTA:
             ota_state["state"] = self.OTA_State.READY_TO_RESTART
             if not self._write_ota_state(ota_state):
                 return False
-
+            
+        #-----------------------------------------------
+        # Restarting
+        #-----------------------------------------------
         if ota_state["state"] == self.OTA_State.READY_TO_RESTART:
                 
             if not self._set_update_flag():
