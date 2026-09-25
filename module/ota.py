@@ -829,7 +829,6 @@ class OTA:
         if not self._mark_ota_success(ota_state):
             print("")
             print("Failed to save successful OTA state.")
-            print("Keeping ota_state.json.")
             return False
 
         print("")
@@ -882,8 +881,6 @@ class OTA:
 
             print("")
             print("OTA report was already acknowledged.")
-
-            print("Removing ota_state.json.")
 
             return True
 
@@ -979,7 +976,6 @@ class OTA:
             print("")
             print("Server acknowledged the OTA result,")
             print("but local report state was not saved.")
-            print("ota_state.json will be kept.")
 
             return False
 
@@ -1002,6 +998,8 @@ class OTA:
 
         if not self._write_ota_state(ota_state):
             return False
+
+        return True
         
     #--------------------------------------------------------------------------
     # Read ota_state.json
@@ -1144,7 +1142,7 @@ class OTA:
                 raise Exception(
                     "ota_state.json was not saved"
                 )
-
+            
             return True
 
         except Exception as error:
@@ -1211,6 +1209,8 @@ class OTA:
 
         if not self._write_ota_state(ota_state):
             return False
+
+        return True
 
     #--------------------------------------------------------------------------
     # Remove ota_state.json
