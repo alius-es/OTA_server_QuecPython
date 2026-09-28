@@ -479,7 +479,8 @@ def validate_ota_report(report):
         "state",
         "target_version",
         "obsolete_files",
-        "report_sent"
+        "report_sent",
+        "recovery_reboots"
     }
 
     if set(report.keys()) != required_fields:
