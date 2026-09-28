@@ -848,8 +848,14 @@ class OTA:
             ):
                 print("Repeat last operation.")
 
-                if self.update(True):
-                    return True
+                if not self.update(True):
+                    print("Repeating update is failed!")
+                    return False
+
+                utime.sleep(5)
+                print("Restarting after update may be failed!")
+                
+                return False
                 
             print("OTA recovery is required.")
             print("")
@@ -868,7 +874,13 @@ class OTA:
                 print("Repeat last operation.")
 
                 if self.force_update(True):
-                    return True
+                    print("Repeating force update failed!")
+                    return False
+                    
+                utime.sleep(5)
+                print("Restarting after force update may be failed!")
+                
+                return False
 
             print("OTA recovery is required.")
             print("")
