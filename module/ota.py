@@ -59,7 +59,7 @@ class OTA:
     DOWNLOAD_ATTEMPTS = 3
     DOWNLOAD_RETRY_DELAY = 2
     MAX_RECOVERY_REBOOTS = 3
-    
+
     #--------------------------------------------------------------------------
     # Constants
     #--------------------------------------------------------------------------
@@ -180,10 +180,7 @@ class OTA:
                 ota_state
             )
 
-        #--------------------------------------------------
-        # Prepare update only in states IDLE and SUCCESS
-        #--------------------------------------------------
-                
+        # Preparing update only in states IDLE and SUCCESS
         if (
             ota_state["state"] == self.OTA_State.IDLE 
             or ota_state["state"] == self.OTA_State.SUCCESS
@@ -207,21 +204,51 @@ class OTA:
             ota_state["report_sent"] = False
             if not self._write_ota_state(ota_state):
                 return False
-
-        #--------------------------------------------------
+            
         # Downloading ...
-        #--------------------------------------------------
-
         if ota_state["state"] == self.OTA_State.DOWNLOADING:
 
-            if not self._download_update(
-                update_info["remote_manifest"]
-            ):
+            remote_manifest = update_info["remote_manifest"]
+
+            remote_version = remote_manifest["version"]
+            target_version = ota_state["target_version"]
+
+            print("")
+            print("OTA version check:")
+            print("  Target version :", target_version)
+            print("  Server version :", remote_version)
+
+            # Server no longer contains the version
+            # of the current OTA transaction.
+            if remote_version != target_version:
+
+                print("")
+                print("OTA version has changed on server.")
+                print("Previous OTA transaction cannot be continued.")
+                print("Starting new OTA transaction.")
+
+                if not self._cleanup_previous_update():
+                    print("")
+                    print("Failed to clean previous OTA transaction.")
+                    return False
+
+                ota_state["operation"] = "update"
+                ota_state["state"] = self.OTA_State.DOWNLOADING
+                ota_state["target_version"] = remote_version
+                ota_state["obsolete_files"] = []
+                ota_state["report_sent"] = False
+                ota_state["recovery_reboots"] = 0
+
+                if not self._write_ota_state(ota_state):
+                    return False
+
+            # Download current server version
+            if not self._download_update(remote_manifest):
                 return False
 
             obsolete_files = self._get_obsolete_files(
                 update_info["local_manifest"],
-                update_info["remote_manifest"]
+                remote_manifest
             )
 
             print("")
@@ -232,13 +259,11 @@ class OTA:
 
             ota_state["obsolete_files"] = obsolete_files
             ota_state["state"] = self.OTA_State.READY_TO_RESTART
+
             if not self._write_ota_state(ota_state):
                 return False
 
-        #--------------------------------------------------
         # Restarting ...
-        #--------------------------------------------------
-
         if ota_state["state"] == self.OTA_State.READY_TO_RESTART:
 
             if not self._set_update_flag():
