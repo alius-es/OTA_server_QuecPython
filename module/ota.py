@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://fisher-screenshots-clubs-learners.trycloudflare.com"
+OTA_SERVER = "https://handling-recipients-continent-surgeon.trycloudflare.com"
 
 APP_DIR = "/usr"
 
@@ -194,11 +194,7 @@ class OTA:
                 print("")
                 print("Normal OTA does not fit in /usr.")
                 print("Starting force update.")
-
-                ota_state["operation"] = "force_update"
-                if not self._write_ota_state(ota_state):
-                    return False
-                
+   
                 return self._start_force_update(
                     update_info["remote_manifest"],
                     ota_state
@@ -260,9 +256,6 @@ class OTA:
 
     def _start_force_update(self, remote_manifest, ota_state):
 
-        if ota_state["operation"] != "force_update":
-            return False
-
         if (
             ota_state["state"] == self.OTA_State.IDLE 
             or ota_state["state"] == self.OTA_State.SUCCESS
@@ -296,7 +289,8 @@ class OTA:
                 print("")
                 print("Not enough storage for force update.")
                 return False
-
+            
+            ota_state["operation"] = "force_update"
             ota_state["state"] = self.OTA_State.DELETING
             ota_state["target_version"] = remote_manifest["version"]
             ota_state["report_sent"] = False
