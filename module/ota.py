@@ -478,32 +478,35 @@ class OTA:
             print("OTA state is invalid.")
             print("Starting emergency recovery.")
 
+            if not self._create_ota_state(
+                self.OTA_State.RECOVERY
+            ):
+                print("")
+                print("Failed to create recovery OTA state.")
+                return False
+
+            ota_state = self._read_ota_state()
+
+            if ota_state is None:
+                print("")
+                print("Failed to read recovery OTA state.")
+                return False
+
             if not self._cleanup_previous_update():
 
                 print("")
                 print("Failed to clean previous APP FOTA update.")
-                print("Restarting module to retry cleanup.")
 
-                try:
-                    Power.powerRestart()
-
-                except Exception as error:
-
-                    print("")
-                    print("Failed to restart module:")
-                    print(error)
-
-                    return False
-
-                utime.sleep(5)
-
-                return False
+                return self._handle_recovery_failure(ota_state)
 
             print("")
             print("Emergency OTA recovery completed.")
             print("A new OTA operation may now be started.")
 
-            self._create_ota_state()
+            if not self._create_ota_state():
+                print("")
+                print("Failed to create new OTA state.")
+                return False
 
             return True
 
@@ -530,7 +533,8 @@ class OTA:
         if ota_state["state"] == self.OTA_State.IDLE:
 
             print("")
-            print("OTA state cannot be recovered.")
+            print("OTA state is IDLE.")
+            print("Recovery is not allowed.")
 
             return True
 
@@ -538,31 +542,69 @@ class OTA:
 
             print("")
             print("Failed to clean previous APP FOTA update.")
-            print("Restarting module to retry cleanup.")
 
-            try:
-                Power.powerRestart()
-
-            except Exception as error:
-
-                print("")
-                print("Failed to restart module:")
-                print(error)
-
-                return False
-
-            utime.sleep(5)
-
-            return False
+            return self._handle_recovery_failure(ota_state)
 
         print("")
         print("OTA recovery completed successfully.")
         print("A new OTA operation may now be started.")
 
-        self._create_ota_state()
+        if not self._create_ota_state():
+            print("")
+            print("Failed to create new OTA state.")
+            return False
 
         return True
 
+    # //////////////////////////////////////////////
+    def _handle_recovery_failure(self, ota_state):
+
+        recovery_reboots = ota_state["recovery_reboots"]
+
+        if recovery_reboots >= self.MAX_RECOVERY_REBOOTS:
+
+            print("")
+            print("Maximum recovery reboot limit reached.")
+            print("Automatic recovery stopped.")
+
+            return False
+
+        recovery_reboots += 1
+        ota_state["recovery_reboots"] = recovery_reboots
+
+        print("")
+        print(
+            "Recovery reboot: {}/{}".format(
+                recovery_reboots,
+                self.MAX_RECOVERY_REBOOTS
+            )
+        )
+
+        if not self._write_ota_state(ota_state):
+
+            print("")
+            print("Failed to save recovery reboot counter.")
+            print("Restarting module is not allowed.")
+
+            return False
+
+        print("")
+        print("Restarting module to retry cleanup.")
+
+        try:
+            Power.powerRestart()
+
+        except Exception as error:
+
+            print("")
+            print("Failed to restart module:")
+            print(error)
+
+            return False
+
+        utime.sleep(5)
+
+        return False
     
     #####################################################
     #------------- Internal implementation -------------#
@@ -1142,6 +1184,16 @@ class OTA:
         if not isinstance(report_sent, bool):
             return False
 
+        recovery_reboots = ota_state.get("recovery_reboots")
+
+        if (
+            not isinstance(recovery_reboots, int)
+            or isinstance(recovery_reboots, bool)
+            or recovery_reboots < 0
+            or recovery_reboots > self.MAX_RECOVERY_REBOOTS
+        ):
+            return False
+        
         # force_update must never have obsolete files.
         if operation == "force_update" and obsolete_files:
             return False
@@ -1218,7 +1270,8 @@ class OTA:
             "state": state,
             "target_version": None,
             "obsolete_files": [],
-            "report_sent": False
+            "report_sent": False,
+            "recovery_reboots": 0
         }
 
         print("")
@@ -1229,6 +1282,7 @@ class OTA:
         print("Target version:", None)
         print("Obsolete files:", [])
         print("Report sent:", False)
+        print("Recovery reboots:", 0)
 
         if not self._write_ota_state(ota_state):
             return False
