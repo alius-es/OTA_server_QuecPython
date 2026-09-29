@@ -474,7 +474,7 @@ def build_manifest(project, directory):
 
         manifest["files"].append({
             "name": relative_name,
-            "path": "/files/" + relative_name,
+            "path": "/" + relative_name,
             "size": file_size,
             "sha256": file_hash
         })
@@ -489,6 +489,18 @@ def build_manifest(project, directory):
 
     if not manifest["files"]:
         raise RuntimeError("The build contains no OTA files.")
+
+    manifest_path = directory / "manifest.json"
+
+    with manifest_path.open("w", encoding="utf-8") as file:
+        json.dump(manifest, file, indent=4)
+        file.write("\n")
+
+    print(
+        "  Manifest   : {}".format(
+            manifest_path
+        )
+    )
 
     print()
     print(
