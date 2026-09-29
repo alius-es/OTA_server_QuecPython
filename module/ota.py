@@ -38,7 +38,7 @@ from misc import Power
 import utime
 import modem
 
-OTA_SERVER = "https://handling-recipients-continent-surgeon.trycloudflare.com"
+OTA_SERVER = "https://elius.uz/wp-content/uploads/ota"
 
 APP_DIR = "/usr"
 
@@ -1703,21 +1703,18 @@ class OTA:
 
             if (
                 not isinstance(path, str)
-                or not path.startswith("/files/")
+                or not path.startswith("/")
                 or "\\" in path
             ):
                 raise ValueError(
                     "Invalid file path: {}".format(path)
                 )
 
-            relative_path = path[len("/files/"):]
+            relative_path = path[1:]
 
-            if relative_path != name:
+            if not self._is_safe_relative_path(relative_path):
                 raise ValueError(
-                    "Manifest name/path mismatch: {} != {}".format(
-                        name,
-                        path
-                    )
+                    "Invalid file path: {}".format(path)
                 )
 
             if not self._is_safe_relative_path(relative_path):
