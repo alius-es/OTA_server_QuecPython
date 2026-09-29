@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -39,6 +40,7 @@ MANIFEST_FILE = BASE_DIRECTORY / "manifest.json"
 
 SOURCE_DIRECTORY = BASE_DIRECTORY / "src"
 FILES_DIRECTORY = BASE_DIRECTORY / "files"
+FILES_ZIP = BASE_DIRECTORY / "files.zip"
 
 MPY_CROSS = BASE_DIRECTORY / "tools" / "mpy-cross-amd64.exe"
 
@@ -513,6 +515,49 @@ def build_manifest(project, directory):
 
 
 # ------------------------------------------------------------------------------
+# ZIP package
+# ------------------------------------------------------------------------------
+
+def create_zip(source_directory):
+    temporary_zip = FILES_ZIP.with_name(
+        FILES_ZIP.name + ".tmp"
+    )
+
+    try:
+        with zipfile.ZipFile(
+            temporary_zip,
+            "w",
+            compression=zipfile.ZIP_DEFLATED
+        ) as archive:
+
+            for file_path in sorted(source_directory.rglob("*")):
+                if not file_path.is_file():
+                    continue
+
+                relative_path = file_path.relative_to(
+                    source_directory
+                )
+
+                archive.write(
+                    file_path,
+                    relative_path.as_posix()
+                )
+
+        temporary_zip.replace(FILES_ZIP)
+
+    except Exception:
+        if temporary_zip.exists():
+            temporary_zip.unlink()
+        raise
+
+    print(
+        "[ZIP] Package created: {}".format(
+            FILES_ZIP
+        )
+    )
+
+
+# ------------------------------------------------------------------------------
 # Transaction
 # ------------------------------------------------------------------------------
 
@@ -846,6 +891,8 @@ def main():
             temporary_manifest
         )
 
+    create_zip(FILES_DIRECTORY)
+
     new_count = change_counts[0]
     modified_count = change_counts[1]
     unchanged_count = change_counts[2]
@@ -868,6 +915,7 @@ def main():
     print("Removed       :", removed_count)
     print()
     print("Manifest      :", MANIFEST_FILE)
+    print("ZIP package   :", FILES_ZIP)
     print("Manifest SHA256:")
     print(manifest_hash)
     print()
