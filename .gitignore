@@ -4,3 +4,5 @@ __pycache__/
 exported_from_usr/
 OTA_Server/cloudflared.exe
 OTA_Server/files/
+OTA_Server/reports/
+OTA_Server/files.zip
