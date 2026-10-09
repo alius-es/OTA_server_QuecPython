@@ -32,6 +32,8 @@ import request
 import ujson
 import uos
 import uhashlib
+import rsa
+import ubinascii
 import app_fota
 import ql_fs
 from misc import Power
@@ -43,6 +45,8 @@ OTA_SERVER = "https://elius.uz/wp-content/uploads/ota"
 APP_DIR = "/usr"
 
 LOCAL_MANIFEST_FILE = APP_DIR + "/manifest.json"
+
+PUBLIC_KEY_FILE = "pub.pem"
 
 OTA_STATE_FILE = "/usr/ota_state.json"
 
@@ -88,6 +92,10 @@ class OTA:
         "ota_state.json",
         "system_config.json",
         "main.py",
+    )
+
+    PERSISTENT_FILES = (
+        "pub.pem",
     )
 
     #--------------------------------------------------------------------------
@@ -672,6 +680,7 @@ class OTA:
             return True
 
         protected = set(self.PROTECTED_FILES)
+        protected.update(self.PERSISTENT_FILES)
 
         try:
             for entry in uos.ilistdir(APP_DIR):
@@ -1391,6 +1400,9 @@ class OTA:
 
             name = file_info.get("name")
 
+            if name in self.PERSISTENT_FILES:
+                continue
+
             if not isinstance(name, str):
                 continue
 
@@ -1420,6 +1432,11 @@ class OTA:
         failed = False
 
         for filename in obsolete_files:
+
+            if filename in self.PERSISTENT_FILES:
+                print("Refusing to remove persistent file:", filename)
+                failed = True
+                continue
 
             if not self._is_safe_relative_path(filename):
                 print("")
@@ -1513,6 +1530,8 @@ class OTA:
         
         try:
             self._validate_manifest(remote_manifest)
+            self._verify_manifest_signature(remote_manifest)
+
         except Exception as error:
             print("")
             print("Remote manifest validation failed:")
@@ -1639,6 +1658,91 @@ class OTA:
 
         return None
 
+    def _manifest_signing_data(self, manifest):
+
+        def to_hex(value):
+            result = ""
+            for byte in value:
+                result += "{:02x}".format(byte)
+            return result
+
+        build = manifest["build"]
+        files = sorted(
+            manifest["files"],
+            key=lambda item: item["name"]
+        )
+
+        lines = [
+            "OTA-MANIFEST-V1",
+            "project=" + to_hex(
+                manifest["project"].encode("utf-8")
+            ),
+            "version=" + to_hex(
+                manifest["version"].encode("utf-8")
+            ),
+            "description=" + to_hex(
+                manifest["description"].encode("utf-8")
+            ),
+            "build.date=" + to_hex(
+                build["date"].encode("utf-8")
+            ),
+            "build.time=" + to_hex(
+                build["time"].encode("utf-8")
+            ),
+            "files=" + str(len(files)),
+        ]
+
+        for item in files:
+            lines.append(
+                "file={}|{}|{}|{}".format(
+                    to_hex(item["name"].encode("utf-8")),
+                    to_hex(item["path"].encode("utf-8")),
+                    item["size"],
+                    item["sha256"],
+                )
+            )
+
+        return "\n".join(lines).encode("utf-8")
+
+
+    def _verify_manifest_signature(self, manifest):
+
+        signature_b64 = manifest.get("signature")
+
+        if not isinstance(signature_b64, str):
+            raise ValueError("Manifest signature is missing")
+
+        try:
+            signature = ubinascii.a2b_base64(signature_b64)
+        except Exception:
+            raise ValueError("Invalid Base64 manifest signature")
+
+        if len(signature) != 256:
+            raise ValueError("Invalid RSA-2048 signature length")
+
+        signing_data = self._manifest_signing_data(manifest)
+        digest = uhashlib.sha256(signing_data).digest()
+
+        try:
+            result = rsa.pub_verify(
+                signature,
+                0,
+                PUBLIC_KEY_FILE,
+                digest
+            )
+        except Exception as error:
+            raise ValueError(
+                "Manifest signature verification error: {}".format(
+                    error
+                )
+            )
+
+        if result != 0:
+            raise ValueError("Manifest signature verification failed")
+
+        print("Manifest signature verified.")
+        return True
+
     #--------------------------------------------------------------------------
     # Validate remote manifest
     #--------------------------------------------------------------------------
@@ -1696,6 +1800,13 @@ class OTA:
             size = file_info["size"]
             sha256 = file_info["sha256"]
 
+            if name in self.PERSISTENT_FILES:
+                raise ValueError(
+                    "Manifest cannot contain persistent file: {}".format(
+                        name
+                    )
+                )
+            
             if not self._is_safe_relative_path(name):
                 raise ValueError(
                     "Invalid file name: {}".format(name)
@@ -2159,6 +2270,7 @@ class OTA:
         required_space = 0
         new_directories = set()
         protected = set(self.PROTECTED_FILES)
+        protected.update(self.PERSISTENT_FILES)
 
         for file_info in remote_manifest["files"]:
 
@@ -2203,6 +2315,7 @@ class OTA:
 
         block_size = self._get_block_size()
         protected = set(self.PROTECTED_FILES)
+        protected.update(self.PERSISTENT_FILES)
 
         def _get_path_storage(path, relative_path):
 
