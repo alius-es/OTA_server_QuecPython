@@ -18,6 +18,7 @@
 #
 #==============================================================================
 
+import base64
 import hashlib
 import json
 import shutil
@@ -43,6 +44,10 @@ FILES_DIRECTORY = BASE_DIRECTORY / "files"
 FILES_ZIP = BASE_DIRECTORY / "files.zip"
 
 MPY_CROSS = BASE_DIRECTORY / "tools" / "mpy-cross-amd64.exe"
+
+OPENSSL_EXE = r"C:\helios\Git\usr\bin\openssl.exe"
+
+PRIVATE_KEY_FILE = Path(r"D:\Abdulmalik\Projects\RSA_test\key_pair\priv.pem")
 
 
 # ------------------------------------------------------------------------------
@@ -447,6 +452,90 @@ def show_build_changes(temp_directory):
 # Manifest
 # ------------------------------------------------------------------------------
 
+
+def manifest_signing_data(manifest):
+    """Return canonical bytes for all manifest fields except signature."""
+
+    build = manifest["build"]
+
+    files = sorted(
+        manifest["files"],
+        key=lambda item: item["name"]
+    )
+
+    lines = [
+        "OTA-MANIFEST-V1",
+        "project=" + manifest["project"].encode("utf-8").hex(),
+        "version=" + manifest["version"].encode("utf-8").hex(),
+        "description=" + manifest["description"].encode("utf-8").hex(),
+        "build.date=" + build["date"].encode("utf-8").hex(),
+        "build.time=" + build["time"].encode("utf-8").hex(),
+        "files=" + str(len(files)),
+    ]
+
+    for item in files:
+        lines.append(
+            "file={}|{}|{}|{}".format(
+                item["name"].encode("utf-8").hex(),
+                item["path"].encode("utf-8").hex(),
+                item["size"],
+                item["sha256"],
+            )
+        )
+
+    return "\n".join(lines).encode("utf-8")
+
+
+def sign_manifest(manifest):
+
+    if not PRIVATE_KEY_FILE.is_file():
+        raise RuntimeError(
+            "Private key not found: {}".format(
+                PRIVATE_KEY_FILE
+            )
+        )
+
+    signing_data = manifest_signing_data(manifest)
+    
+    result = subprocess.run(
+        [
+            OPENSSL_EXE,
+            "dgst",
+            "-sha256",
+            "-sign",
+            str(PRIVATE_KEY_FILE),
+        ],
+        input=signing_data,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Manifest signing failed:\n{}".format(
+                result.stderr.decode(
+                    "utf-8",
+                    errors="replace"
+                )
+            )
+        )
+
+    signature = result.stdout
+
+    if len(signature) != 256:
+        raise RuntimeError(
+            "Expected RSA-2048 signature, got {} bytes".format(
+                len(signature)
+            )
+        )
+
+    manifest["signature"] = base64.b64encode(
+        signature
+    ).decode("ascii")
+
+    return manifest
+
+
 def build_manifest(project, directory):
     print()
     print("[MANIFEST] Generating manifest.json...")
@@ -492,10 +581,13 @@ def build_manifest(project, directory):
     if not manifest["files"]:
         raise RuntimeError("The build contains no OTA files.")
 
+    # Sign every manifest field except "signature".
+    sign_manifest(manifest)
+
     manifest_path = directory / "manifest.json"
 
     with manifest_path.open("w", encoding="utf-8") as file:
-        json.dump(manifest, file, indent=4)
+        json.dump(manifest, file, indent=4, ensure_ascii=False)
         file.write("\n")
 
     print(
