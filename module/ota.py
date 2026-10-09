@@ -688,7 +688,11 @@ class OTA:
                 name = entry[0]
                 entry_type = entry[1]
 
-                if name in protected:
+                if name in self.PERSISTENT_FILES:
+                    print("Preserved:", name)
+                    continue
+
+                if name in self.PROTECTED_FILES:
                     print("Protected:", name)
                     continue
 
