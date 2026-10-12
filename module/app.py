@@ -81,17 +81,31 @@ def print_banner():
 
 def application_loop():
 
-    print("Application is running...")
+    ota_client = ota.OTA()
+    counter = 0
+    update_permission = True
 
+    ota_client.update(update_permission)
+
+    print("")
+    print("==================================================")
+    print("")
+    print("Application is running...")
+    
     while True:
 
         #--------------------------------------------------------------
         # Place your application code here.
         #--------------------------------------------------------------
 
-        print("Heartbeat")
+        print("Deep heartbeat")
 
-        utime.sleep(5)
+        utime.sleep(100)
+
+        counter += 1
+        if counter > 2:
+            ota_client.update(update_permission)
+            counter = 0
 
 
 #------------------------------------------------------------------------------
@@ -124,7 +138,9 @@ def run():
     # is started.
     #------------------------------------------------------------------
 
-    if not ota_client.process_ota():
+    process_result = ota_client.process_ota()
+
+    if not process_result:
 
         print("")
         print("OTA processing failed.")

@@ -4,16 +4,15 @@
 # Description:
 #     Main application module.
 #
-#     This module controls the application startup sequence.
+#     This module demonstrates how the OTA library can be integrated
+#     into the application startup sequence.
 #
 # Startup sequence:
 #
 #     1. Print application information.
-#     2. Check OTA server.
-#     3. Download update if available.
-#     4. Install update.
-#     5. Restart device.
-#     6. Start the main application.
+#     2. Wait for network.
+#     3. Process the result of a previous OTA update.
+#     4. Start the main application.
 #
 #==============================================================================
 
@@ -25,18 +24,19 @@
 import utime
 import ujson
 import ota
-import config
 import checkNet
 
 
 #------------------------------------------------------------------------------
 # Constants
 #------------------------------------------------------------------------------
+
 NETWORK_STAGES = {
     1: "SIM card",
     2: "Network registration",
     3: "PDP context"
 }
+
 
 #------------------------------------------------------------------------------
 # Read local manifest
@@ -46,17 +46,18 @@ def get_local_manifest():
 
     try:
 
-        with open(config.LOCAL_MANIFEST_FILE, "r") as file:
+        with open(ota.LOCAL_MANIFEST_FILE, "r") as file:
 
             return ujson.load(file)
 
-    except:
+    except Exception:
 
         return {
             "project": "Unknown",
             "version": "Unknown",
             "files": []
         }
+
 
 #------------------------------------------------------------------------------
 # Print application banner
@@ -73,23 +74,38 @@ def print_banner():
     print("==================================================")
     print("")
 
+
 #------------------------------------------------------------------------------
 # Main application
 #------------------------------------------------------------------------------
 
 def application_loop():
 
-    print("Application is running...")
+    ota_client = ota.OTA()
+    counter = 0
+    update_permission = True
 
+    ota_client.update(update_permission)
+
+    print("")
+    print("==================================================")
+    print("")
+    print("Application is running...")
+    
     while True:
 
         #--------------------------------------------------------------
         # Place your application code here.
         #--------------------------------------------------------------
 
-        print("Heartbeat")
+        print("Deep heartbeat")
 
-        utime.sleep(5)
+        utime.sleep(100)
+
+        counter += 1
+        if counter > 2:
+            ota_client.update(update_permission)
+            counter = 0
 
 
 #------------------------------------------------------------------------------
@@ -101,7 +117,7 @@ def run():
     print_banner()
 
     if not wait_for_network():
-
+    
         print("")
         print("Starting application without OTA.")
         print("")
@@ -109,18 +125,31 @@ def run():
         application_loop()
 
         return
-    
-    try:
 
-        ota_client = ota.OTA()
+    ota_client = ota.OTA()
 
-        if ota_client.update():
-            return
+    #------------------------------------------------------------------
+    # Process a previously started OTA operation.
+    #
+    # If an OTA update was performed before the reboot, this verifies
+    # the result and reports it to the server.
+    #
+    # If reporting fails, ota_state.json is kept and no new OTA update
+    # is started.
+    #------------------------------------------------------------------
 
-    except Exception as e:
+    process_result = ota_client.process_ota()
+
+    if not process_result:
 
         print("")
-        print("OTA Error:", e)
+        print("OTA processing failed.")
+        print("Starting application without new OTA.")
+        print("")
+
+        application_loop()
+
+        return
 
     print("")
     print("Starting application...")
@@ -132,6 +161,7 @@ def run():
 #------------------------------------------------------------------------------
 # Wait until cellular network is ready
 #------------------------------------------------------------------------------
+
 def wait_for_network(timeout=60):
 
     print("")

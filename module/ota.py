@@ -108,7 +108,7 @@ class OTA:
 
         self.manifest_url = self.server + "/manifest.json"
 
-        self.report_url = self.server + "/ota/report"
+        self.report_url = "https://elius.uz/wp-json/quecpython-ota/v1/report"
 
         self.fota = app_fota.new()
 
